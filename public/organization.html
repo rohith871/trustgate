@@ -107,9 +107,21 @@
           <div class="drawer-body">
             <div class="field"><label>Document name</label><input type="text" id="reqDocName" placeholder="e.g. Vaccination Record"></div>
             <div class="field"><label>User's TrustGate ID or email</label><input type="text" id="reqUser" value="rohan.k@trustgate.id"></div>
-            <div class="field"><label>Document category</label>
-              <select id="reqCategory"><option>Medical Record</option><option>Degree / Marksheet</option><option>KYC Document</option><option>Employment Record</option></select>
-            </div>
+            <div class="field">
+  <label>Document category</label>
+  <select id="reqCategory">
+    <option value="Medical Record">Medical Record</option>
+    <option value="Degree / Marksheet">Degree / Marksheet</option>
+    <option value="KYC Document">KYC Document</option>
+    <option value="Employment Contract">Employment Contract</option>
+    <option value="Tax Return / Proof">Tax Return / Proof</option>
+    <option value="Identity Card (Aadhaar / Passport / SSN)">Identity Card (Aadhaar / Passport / SSN)</option>
+    <option value="Property / Land Deed">Property / Land Deed</option>
+    <option value="Financial Statement">Financial Statement</option>
+    <option value="Utility / Address Proof">Utility / Address Proof</option>
+    <option value="Certificates / Credentials">Certificates / Credentials</option>
+  </select>
+</div>
             <div class="field"><label>Reason for request</label><input type="text" id="reqReason" placeholder="e.g. Pre-admission verification"></div>
             <button class="gate-submit" onclick="sendNewRequest()">Send request</button>
             <p class="sim-note" style="margin-top:12px;">This appears instantly in the recipient's Incoming Requests (open individual.html to see it land there).</p>

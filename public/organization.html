@@ -135,7 +135,15 @@
         <div class="topline"><div><h1>Documents Received</h1><p class="subhead">Documents you currently hold a valid, time-bound key for.</p></div></div>
         <div class="panel">
           <div class="table-scroll"><table>
-            <thead><tr><th>Document</th><th>From</th><th>Access key</th><th>Expires</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>From</th>
+                <th>Access key</th>
+                <th>Expires</th>
+                <th>Action</th> <!-- Added Action header -->
+              </tr>
+            </thead>
             <tbody id="receivedBody">
               <!-- Dynamically populated from PostgreSQL by app.js -->
             </tbody>

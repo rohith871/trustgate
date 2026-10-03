@@ -57,36 +57,43 @@ function handleFileSelect(input) {
   }
 }
 
-async function handleDocumentUpload(e) {
-  if (e) e.preventDefault();
+async function handleDocumentUpload(event) {
+  event.preventDefault();
 
   const titleInput = document.getElementById('doc-title');
-  const categoryInput = document.getElementById('doc-category');
+  const categorySelect = document.getElementById('doc-category');
+  const fileInput = document.getElementById('doc-file');
 
-  const title = titleInput ? titleInput.value.trim() : '';
-  const category = categoryInput ? categoryInput.value : 'General';
-
-  if (!title) {
+  if (!titleInput.value) {
     alert('Please enter a document title.');
     return;
   }
 
+  const formData = new FormData();
+  formData.append('title', titleInput.value);
+  formData.append('category', categorySelect.value);
+  if (fileInput.files[0]) {
+    formData.append('file', fileInput.files[0]);
+  }
+
   try {
-    const response = await fetch('/api/documents', {
+    const res = await fetch('/api/documents/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, category })
+      body: formData // Sends binary multipart data
     });
 
-    if (response.ok) {
-      closeUploadModal();
-      renderIndividualAll();
+    const data = await res.json();
+
+    if (res.ok) {
+      alert(`✓ Document uploaded with authentic fingerprint!\nSHA-256: ${data.version.file_hash.substring(0, 16)}...`);
+      if (typeof closeUploadModal === 'function') closeUploadModal();
+      if (typeof renderIndividualAll === 'function') renderIndividualAll();
     } else {
-      const err = await response.json();
-      alert('Upload failed: ' + (err.error || 'Unknown error'));
+      alert('Upload Error: ' + (data.message || data.error));
     }
   } catch (err) {
-    console.error('Database insertion error:', err);
+    console.error('Document upload error:', err);
+    alert('Failed to connect to backend server.');
   }
 }
 
@@ -210,33 +217,87 @@ async function renderIndividualAll() {
   await renderSharedAccess();
 }
 
+let selectedDocIdForApproval = null;
+
+// 1. Triggered when user clicks 'Approve' button on any request row
 async function handleApprove(requestId) {
   try {
-    const res = await fetch(`/api/requests/${requestId}/approve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    });
+    const ledgerRes = await fetch('/api/my-ledger-documents');
+    const ledgerDocs = await ledgerRes.json();
 
-    const data = await res.json();
-    if (res.ok) {
-      alert('✓ Request Approved!\nAccess Key Generated: ' + (data.grant ? data.grant.key_display_code : 'TG-ACTIVE'));
-      renderIndividualAll();
-    } else {
-      if (data.error === 'DOCUMENT_MISSING') {
-        const wantUpload = confirm(`${data.message}\n\nWould you like to open the upload modal now?`);
-        if (wantUpload && typeof openUploadModal === 'function') {
-          openUploadModal();
-        }
-      } else {
-        alert('Approval error: ' + (data.message || data.error));
+    if (!ledgerDocs || ledgerDocs.length === 0) {
+      const wantUpload = confirm('Your ledger is empty. Would you like to upload a document to your ledger first?');
+      if (wantUpload && typeof openUploadModal === 'function') {
+        openUploadModal();
       }
+      return;
     }
+
+    // Set pending request ID
+    document.getElementById('pendingRequestId').value = requestId;
+    selectedDocIdForApproval = null;
+
+    // Render ledger items inside the UI Modal
+    const container = document.getElementById('ledgerDocsContainer');
+    container.innerHTML = ledgerDocs.map((doc, idx) => `
+      <label style="display: flex; align-items: center; gap: 12px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;">
+        <input type="radio" name="ledgerDocRadio" value="${doc.document_id}" ${idx === 0 ? 'checked' : ''} onchange="selectedDocIdForApproval = ${doc.document_id}">
+        <div>
+          <strong style="display: block; color: #1e293b;">${doc.title}</strong>
+          <span style="font-size: 12px; color: #64748b;">Category: ${doc.category || 'General'} | ID: ${doc.document_id}</span>
+        </div>
+      </label>
+    `).join('');
+
+    // Default choice to first document
+    selectedDocIdForApproval = ledgerDocs[0].document_id;
+
+    // Show Modal
+    document.getElementById('documentSelectModal').style.display = 'flex';
+
   } catch (err) {
-    console.error('Approval failed:', err);
-    alert('Failed to connect to backend server.');
+    console.error('Failed to open document selection modal:', err);
+    alert('Failed to load ledger documents.');
   }
 }
 
+// 2. Helper to close modal
+function closeSelectModal() {
+  document.getElementById('documentSelectModal').style.display = 'none';
+  selectedDocIdForApproval = null;
+}
+
+// 3. Triggered when user clicks 'Grant Access' inside the modal
+async function confirmApprovalSelection() {
+  const requestId = document.getElementById('pendingRequestId').value;
+
+  if (!requestId || !selectedDocIdForApproval) {
+    alert('Please select a document to proceed.');
+    return;
+  }
+
+  try {
+    const approveRes = await fetch(`/api/requests/${requestId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedDocumentId: selectedDocIdForApproval })
+    });
+
+    const data = await approveRes.json();
+    closeSelectModal();
+
+    if (approveRes.ok) {
+      alert(`✓ Request Approved Successfully!\nAccess Key Code: ${data.grant.key_display_code}`);
+      if (typeof renderIndividualAll === 'function') renderIndividualAll();
+    } else {
+      alert('Approval Error: ' + (data.message || data.error));
+    }
+
+  } catch (err) {
+    console.error('Approval submission error:', err);
+    alert('Failed to send approval decision to server.');
+  }
+}
 async function openDrawer(docId) {
   try {
     const res = await fetch('/api/documents');
@@ -368,8 +429,15 @@ async function renderDocsReceived() {
         <td>Individual User</td>
         <td><span class="key-chip">${r.key_display_code || 'GRANTED'}</span></td>
         <td class="expiry">Valid</td>
+        <td>
+          <a href="/api/documents/download/${r.key_display_code}" 
+             target="_blank" 
+             style="padding: 6px 12px; background-color: #2563eb; color: #ffffff; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: 500; display: inline-block;">
+            View Document
+          </a>
+        </td>
       </tr>`)
-      : `<tr><td colspan="4" style="color:var(--ink-faint); text-align:center; padding:32px;">Nothing received yet.</td></tr>`;
+      : `<tr><td colspan="5" style="color:var(--ink-faint); text-align:center; padding:32px;">Nothing received yet.</td></tr>`;
   } catch (err) {
     console.error('Error rendering received docs:', err);
   }

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrustGate — Document Verification Ledger</title>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  .screen { display: none; }
+  .screen.active { display: flex; }
+  #landing.active, #roleSelect.active { animation: screenIn .4s ease; }
+  @keyframes screenIn { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+
+<!-- ============ LANDING ============ -->
+<div id="landing" class="screen active">
+  <div class="ledger-lines"></div>
+  <div class="seal-wrap"><div class="seal"><div class="seal-check"></div></div></div>
+  <p class="eyebrow">A single, auditable channel</p>
+  <h1 class="hero">Your documents. <em>Their requests.</em> One ledger.</h1>
+  <p class="hero-sub">TrustGate replaces scattered emails and unverifiable PDFs with one ledger where institutions, employers, hospitals and banks can request, verify, approve, and audit documents — nothing overwritten, nothing untracked.</p>
+  <button class="enter-btn" onclick="go('roleSelect')">Get started <span class="arrow">→</span></button>
+  <div class="hero-stats">
+    <div class="hstat"><b>128</b><span>Documents on ledger</span></div>
+    <div class="hstat"><b>19</b><span>Active access keys</span></div>
+    <div class="hstat"><b>100%</b><span>Actions audited</span></div>
+  </div>
+</div>
+
+<!-- ============ ROLE SELECT ============ -->
+<div id="roleSelect" class="screen">
+  <div style="display:flex; flex-direction:column; align-items:center;">
+    <p class="rs-eyebrow">Continue as</p>
+    <h2 class="rs-title">Who's signing in?</h2>
+    <p class="rs-sub">TrustGate works differently depending on which side of a request you're on.</p>
+    <div class="rs-cards">
+      <a class="rs-card" href="individual.html" style="text-decoration:none; color:inherit;">
+        <div class="rs-icon">👤</div>
+        <h3>Individual</h3>
+        <p>Store your degrees, records, and IDs. Review incoming requests from institutions and approve access with a time-bound key — nothing leaves your ledger without your say.</p>
+        <div class="rs-go">Continue as an individual →</div>
+      </a>
+      <a class="rs-card" href="organization.html" style="text-decoration:none; color:inherit;">
+        <div class="rs-icon">🏛</div>
+        <h3>Organization</h3>
+        <div class="rs-tag">Requires verified credentials</div>
+        <p>For institutions, employers, hospitals, and banks. Request specific documents from a person directly, and receive them the moment they approve — fully logged, nothing over email.</p>
+        <div class="rs-go">Continue as an organization →</div>
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+  function go(id){
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    window.scrollTo(0,0);
+  }
+</script>
+
+</body>
+</html>

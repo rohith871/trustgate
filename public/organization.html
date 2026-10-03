@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrustGate — Organization</title>
+<link rel="stylesheet" href="css/styles.css">
+<style>
+  #orgGate{ display:flex; }
+  #orgApp{ display:none; }
+  .upload-box { cursor: pointer; border: 2px dashed #ccc; padding: 16px; text-align: center; border-radius: 6px; display: block; }
+  .upload-box:hover { border-color: #3182ce; background: #f7fafc; }
+</style>
+</head>
+<body>
+
+<!-- ============ ORG VERIFICATION GATE ============ -->
+<div id="orgGate">
+  <div class="gate-box">
+
+    <div id="gateForm">
+      <div class="gate-head">
+        <div class="gate-badge">🏛</div>
+        <p class="gate-title">Register your organization</p>
+      </div>
+      <p class="gate-sub">Organizations must be verified before they can send document requests to users — this keeps the request side of TrustGate limited to accountable institutions.</p>
+
+      <div class="field"><label>Organization name</label><input type="text" id="orgName" placeholder="e.g. City General Hospital"></div>
+      <div class="field"><label>Organization type</label>
+        <select id="orgType"><option>Educational institution</option><option>Employer</option><option>Hospital</option><option>Bank / NBFC</option></select>
+      </div>
+      <div class="field"><label>Registration / license number</label><input type="text" id="orgRegNo" placeholder="e.g. UDISE / CIN / IFSC-linked ID"></div>
+      
+      <div class="field">
+        <label>Proof of registration</label>
+        <label for="orgProofFileInput" class="upload-box" id="orgUploadLabel">
+          📄 <b id="orgUploadFileName">Upload certificate or license</b><br>PDF, up to 10MB
+        </label>
+        <input type="file" id="orgProofFileInput" accept=".pdf,.png,.jpg,.jpeg" style="display:none;" onchange="handleOrgFileSelect(this)">
+      </div>
+
+      <button class="gate-submit" onclick="submitGate()">Submit for verification</button>
+      <p style="text-align:center; margin-top:16px;"><a href="index.html" style="font-size:12px; color:var(--ink-faint);">← Back</a></p>
+    </div>
+
+    <div id="gatePending" style="display:none;" class="pending-view">
+      <div class="pending-ring"></div>
+      <p class="pending-title">Verification pending</p>
+      <p class="pending-sub">Your registration and documents have been queued for review by the TrustGate compliance team. This usually takes 1–2 business days. You'll be notified by email once approved.</p>
+      <button class="sim-btn" onclick="approveGate()">Simulate admin approval →</button>
+      <div class="sim-note">(Demo control — in production this happens after manual review)</div>
+    </div>
+
+    <div id="gateApproved" style="display:none;" class="approved-view">
+      <div class="approved-check"></div>
+      <p class="pending-title">Organization verified</p>
+      <p class="pending-sub" id="approvedText">You are now a verified TrustGate requester. You can start sending document requests to users.</p>
+      <button class="continue-btn" onclick="enterOrgApp()">Continue to dashboard →</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ ORGANIZATION APP ============ -->
+<div id="orgApp">
+  <div class="app-grid">
+    <aside class="sidebar">
+      <a class="brand" href="index.html" style="text-decoration:none; color:inherit;">
+        <div class="brand-mark"></div>
+        <div><div class="brand-name">TrustGate</div><div class="brand-sub">Verification Ledger</div></div>
+      </a>
+      <span class="side-tag">✓ Verified organization</span>
+      <nav>
+        <button class="nav-item active" data-view="orgOverview"><span class="nav-icon">◎</span> Overview</button>
+        <button class="nav-item" data-view="sendRequest"><span class="nav-icon">＋</span> Send Request</button>
+        <button class="nav-item" data-view="requestsSent"><span class="nav-icon">◈</span> Requests Sent <span class="nav-count">–</span></button>
+        <button class="nav-item" data-view="docsReceived"><span class="nav-icon">▤</span> Documents Received <span class="nav-count">–</span></button>
+        <button class="nav-item" data-view="orgAudit"><span class="nav-icon">≡</span> Audit Log</button>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="role-chip">ROLE · ORG_VERIFIER</span><br>
+        City General Hospital<br>
+        Priya M. — Records Officer
+        <a href="index.html" style="display:block; margin-top:10px;"><button class="switch-role">↺ Switch role</button></a>
+      </div>
+    </aside>
+    <main>
+      <!-- OVERVIEW -->
+      <section id="orgOverview" class="view active">
+        <div class="topline">
+          <div><h1>Overview</h1><p class="subhead">City General Hospital's activity across TrustGate.</p></div>
+          <button class="new-btn" onclick="switchTab('sendRequest')">＋ Send Request</button>
+        </div>
+        <div class="stats">
+          <div class="stat-card"><div class="stat-num" id="statReceived">0</div><div class="stat-label">Documents received</div></div>
+          <div class="stat-card accent"><div class="stat-num" id="statPending">0</div><div class="stat-label">Requests pending</div></div>
+          <div class="stat-card"><div class="stat-num" id="statSent">0</div><div class="stat-label">Total sent</div></div>
+          <div class="stat-card"><div class="stat-num" id="statDeclined">0</div><div class="stat-label">Declined</div></div>
+        </div>
+        <div class="panel" id="auditOrgBody"></div>
+      </section>
+
+      <!-- SEND REQUEST -->
+      <section id="sendRequest" class="view">
+        <div class="topline"><div><h1>Send a Request</h1><p class="subhead">Ask a person directly for a specific document. They'll see this in their Incoming Requests and choose whether to approve it.</p></div></div>
+        <div class="panel" style="max-width:560px;">
+          <div class="drawer-body">
+            <div class="field"><label>Document name</label><input type="text" id="reqDocName" placeholder="e.g. Vaccination Record"></div>
+            <div class="field"><label>User's TrustGate ID or email</label><input type="text" id="reqUser" value="rohan.k@trustgate.id"></div>
+            <div class="field"><label>Document category</label>
+              <select id="reqCategory"><option>Medical Record</option><option>Degree / Marksheet</option><option>KYC Document</option><option>Employment Record</option></select>
+            </div>
+            <div class="field"><label>Reason for request</label><input type="text" id="reqReason" placeholder="e.g. Pre-admission verification"></div>
+            <button class="gate-submit" onclick="sendNewRequest()">Send request</button>
+            <p class="sim-note" style="margin-top:12px;">This appears instantly in the recipient's Incoming Requests (open individual.html to see it land there).</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- REQUESTS SENT -->
+      <section id="requestsSent" class="view">
+        <div class="topline"><div><h1>Requests Sent</h1><p class="subhead">Track every request you've raised and its current stage.</p></div></div>
+        <div class="panel">
+          <div class="table-scroll"><table>
+            <thead><tr><th>Document</th><th>Sent to</th><th>Status</th><th>Sent</th></tr></thead>
+            <tbody id="sentBody">
+              <!-- Dynamically populated from PostgreSQL by app.js -->
+            </tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- DOCUMENTS RECEIVED -->
+      <section id="docsReceived" class="view">
+        <div class="topline"><div><h1>Documents Received</h1><p class="subhead">Documents you currently hold a valid, time-bound key for.</p></div></div>
+        <div class="panel">
+          <div class="table-scroll"><table>
+            <thead><tr><th>Document</th><th>From</th><th>Access key</th><th>Expires</th><th></th></tr></thead>
+            <tbody id="receivedBody">
+              <!-- Dynamically populated from PostgreSQL by app.js -->
+            </tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- ORG AUDIT -->
+      <section id="orgAudit" class="view">
+        <div class="topline"><div><h1>Audit Log</h1><p class="subhead">Every document your organization has requested, received, or had access to expire.</p></div></div>
+        <div class="panel" id="auditOrgBody2"></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script src="js/shared-ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

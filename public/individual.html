@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TrustGate — My Documents</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div class="app-grid">
+  <aside class="sidebar">
+    <a class="brand" href="index.html" style="text-decoration:none; color:inherit;">
+      <div class="brand-mark"></div>
+      <div><div class="brand-name">TrustGate</div><div class="brand-sub">Verification Ledger</div></div>
+    </a>
+    <span class="side-tag">Individual account</span>
+    <nav>
+      <button class="nav-item active" data-view="myDocs"><span class="nav-icon">▤</span> My Documents <span class="nav-count">–</span></button>
+      <button class="nav-item" data-view="incoming"><span class="nav-icon">◈</span> Incoming Requests <span class="nav-count" id="navIncomingCount">–</span></button>
+      <button class="nav-item" data-view="sharedAccess"><span class="nav-icon">🔑</span> Shared Access <span class="nav-count" id="navSharedCount">–</span></button>
+      <button class="nav-item" data-view="myAudit"><span class="nav-icon">≡</span> Audit Log</button>
+    </nav>
+    <div class="sidebar-foot">
+      <span class="role-chip">ROLE · DOCUMENT_OWNER</span><br>
+      Rohan Krishnan<br>
+      rohan.k@trustgate.id
+      <a href="index.html" style="display:block; margin-top:10px;"><button class="switch-role">↺ Switch role</button></a>
+    </div>
+  </aside>
+
+  <main>
+    <!-- MY DOCUMENTS -->
+    <section id="myDocs" class="view active">
+      <div class="topline">
+        <div><h1>My Documents</h1><p class="subhead">Everything you upload is versioned and hash-fingerprinted. Only you decide who ever sees it.</p></div>
+        <button class="new-btn" onclick="openUploadModal()">＋ Upload Document</button>
+      </div>
+      <div class="stats">
+        <div class="stat-card"><div class="stat-num" id="statDocCount">0</div><div class="stat-label">Documents stored</div></div>
+        <div class="stat-card accent" id="statAwaiting"><div class="stat-num" id="statAwaitingNum">–</div><div class="stat-label">Requests awaiting you</div></div>
+        <div class="stat-card" id="statKeys"><div class="stat-num" id="statKeysNum">–</div><div class="stat-label">Active access keys</div></div>
+        <div class="stat-card"><div class="stat-num">0</div><div class="stat-label">Anomalies on your ledger</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <div class="panel-title">Your ledger</div>
+          <input type="search" id="docSearchInput" placeholder="Search documents…" oninput="filterDocuments(this.value)" style="padding:6px 12px; border:1px solid #ccc; border-radius:4px; outline:none; font-size:13px;">
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>Version</th>
+                <th>Hash</th>
+                <th>Visibility</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="myDocsBody">
+              <!-- Dynamically populated from PostgreSQL by app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- INCOMING REQUESTS -->
+    <section id="incoming" class="view">
+      <div class="topline">
+        <div><h1>Incoming Requests</h1><p class="subhead">Organizations asking for access to one of your documents. Approving issues a time-bound key — nothing is shared until you do.</p></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title" id="incomingCount">Waiting on you</div></div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Requested document</th>
+                <th>Requesting org</th>
+                <th>Reason given</th>
+                <th>Received</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="incomingBody">
+              <!-- Dynamically populated from PostgreSQL by app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SHARED ACCESS -->
+    <section id="sharedAccess" class="view">
+      <div class="topline">
+        <div><h1>Shared Access</h1><p class="subhead">Every key you've issued, and when it expires. Revoke any of these instantly.</p></div>
+      </div>
+      <div class="panel">
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>Shared with</th>
+                <th>Access key</th>
+                <th>Expires</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="sharedBody">
+              <!-- Dynamically populated from PostgreSQL by app.js -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- AUDIT LOG -->
+    <section id="myAudit" class="view">
+      <div class="topline"><div><h1>Audit Log</h1><p class="subhead">Every time your documents were read, shared, or a key was issued.</p></div></div>
+      <div class="panel" id="auditIndividualBody"></div>
+    </section>
+  </main>
+</div>
+
+<!-- ============ UPLOAD DOCUMENT MODAL ============ -->
+<div id="uploadModalScrim" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.65); z-index: 99999; align-items: center; justify-content: center;">
+  
+  <div style="background: #ffffff; width: 100%; max-width: 460px; border-radius: 12px; padding: 28px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3), 0 8px 10px -6px rgba(0,0,0,0.3); color: #111827; position: relative; font-family: inherit;">
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+      <h3 style="margin: 0; font-size: 20px; font-weight: 700; color: #111827;">Upload Document</h3>
+      <button type="button" onclick="closeUploadModal()" style="background: transparent; border: none; font-size: 20px; cursor: pointer; color: #6b7280; line-height: 1;">✕</button>
+    </div>
+
+    <form id="upload-doc-form" onsubmit="handleDocumentUpload(event)">
+      
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Document Title</label>
+        <input type="text" id="doc-title" required placeholder="e.g. Passport Copy" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: #fff; color: #111827;">
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Category</label>
+        <select id="doc-category" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: #fff; color: #111827;">
+          <option value="Degree / Marksheet">Degree / Marksheet</option>
+          <option value="Medical Record">Medical Record</option>
+          <option value="KYC Document">KYC Document</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Select File</label>
+        <label for="doc-file" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; border: 2px dashed #3b82f6; border-radius: 8px; background: #eff6ff; cursor: pointer; text-align: center;">
+          <span style="font-size: 24px; margin-bottom: 6px;">📄</span>
+          <span id="file-upload-label" style="font-size: 13px; font-weight: 600; color: #2563eb;">Click to choose a file from your computer</span>
+        </label>
+        <input type="file" id="doc-file" onchange="handleFileSelect(this)" style="display: none;">
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 12px;">
+        <button type="button" onclick="closeUploadModal()" style="padding: 10px 18px; border: 1px solid #d1d5db; background: #ffffff; border-radius: 6px; font-weight: 600; color: #374151; cursor: pointer;">Cancel</button>
+        <button type="submit" style="padding: 10px 18px; border: none; background: #2563eb; color: #ffffff; border-radius: 6px; font-weight: 600; cursor: pointer;">Upload to Ledger</button>
+      </div>
+
+    </form>
+  </div>
+</div>
+
+<!-- ============ KEY ISSUANCE MODAL ============ -->
+<div id="modalScrim" style="display:none;">
+  <div class="modal">
+    <div class="modal-seal"></div>
+    <h3>Access approved</h3>
+    <p class="desc" id="modalDesc">You've granted <b id="modalOrg">—</b> time-bound access to <b id="modalDoc">—</b>.</p>
+    <div class="modal-key-box">
+      <div class="label">Access key issued</div>
+      <div class="key" id="modalKey">TG-0000-0000</div>
+      <div class="exp" id="modalExp">Expires in 24 hours · revoke anytime from Shared Access</div>
+    </div>
+    <button class="modal-close" onclick="closeModal()">Done</button>
+  </div>
+</div>
+
+<!-- ============ DOCUMENT DETAIL DRAWER ============ -->
+<div id="scrim" onclick="closeDrawer()"></div>
+<div id="drawer">
+  <div class="drawer-head">
+    <div><p class="drawer-title" id="d-title">Document</p><p class="drawer-meta" id="d-meta">Owner · Category</p></div>
+    <button class="drawer-close" onclick="closeDrawer()">✕</button>
+  </div>
+  <div class="drawer-body">
+    <p class="drawer-section-title">Version chain</p>
+    <div class="chain" id="d-chain"></div>
+    <p class="drawer-section-title">Details</p>
+    <div class="drawer-row"><span>Visibility</span><span id="d-status">—</span></div>
+    <div class="drawer-row"><span>Access key</span><span class="hash" id="d-org">—</span></div>
+    <div class="drawer-row"><span>Expires</span><span id="d-expiry">—</span></div>
+    <div class="drawer-row"><span>Current hash</span><span class="hash" id="d-hash">—</span></div>
+    <div class="drawer-actions"><button class="primary">Download record</button><button>Revoke</button></div>
+  </div>
+</div>
+
+<script src="js/shared-ui.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

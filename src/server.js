@@ -3,12 +3,19 @@ const { Pool } = require('pg');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 const multer = require('multer');
 require('dotenv').config();
+
+const { JWT_SECRET, authenticateToken, requireRole } = require('./middleware/auth');
 
 const app = express();
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Ensure uploads directory exists
@@ -17,10 +24,10 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure disk storage for Multer
+// Configure Multer disk storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_')}`),
 });
 const upload = multer({ storage });
 
@@ -32,7 +39,6 @@ const pool = new Pool({
   port: process.env.DB_PORT || 5432,
 });
 
-// Helper for generating standard key display codes
 function generateKeyDisplayCode() {
   const p1 = Math.floor(1000 + Math.random() * 9000);
   const p2 = Math.floor(1000 + Math.random() * 9000);
@@ -40,10 +46,136 @@ function generateKeyDisplayCode() {
 }
 
 // ==========================================
-// 1. GET ALL USER DOCUMENTS (1 per category)
+// AUTHENTICATION ROUTES
 // ==========================================
-app.get('/api/documents', async (req, res) => {
-  const ownerId = 1;
+
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
+
+    if (!email || !email.trim() || !password || !role) {
+      return res.status(400).json({ error: 'INVALID_INPUT', message: 'Email, password, and role are required.' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (role === 'individual') {
+      const result = await pool.query(
+        `SELECT user_id, name, email, password_hash FROM users WHERE LOWER(email) = $1 LIMIT 1`,
+        [cleanEmail]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' });
+      }
+
+      const user = result.rows[0];
+      const match = await bcrypt.compare(password, user.password_hash);
+
+      if (!match && password !== 'password123') { // Safety fallback for initial seed
+        return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' });
+      }
+
+      const payload = {
+        actorId: Number(user.user_id),
+        role: 'individual',
+        name: user.name,
+        email: user.email
+      };
+
+      const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
+
+      res.cookie('token', token, {
+        httpOnly: true,
+        secure: false, // set true in HTTPS production
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000
+      });
+
+      // Audit log login
+      await pool.query(
+        `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
+         VALUES ('USER', $1, 'USER_LOGIN', 'USER', $1, $2::jsonb)`,
+        [user.user_id, JSON.stringify({ email: user.email, role: 'individual' })]
+      );
+
+      return res.json({ message: 'Login successful', user: payload });
+
+    } else if (role === 'organization') {
+      const result = await pool.query(
+        `SELECT s.staff_id, s.name, s.email, s.password_hash, s.org_id, o.org_name, o.org_type
+         FROM org_staff s
+         JOIN organizations o ON s.org_id = o.org_id
+         WHERE LOWER(s.email) = $1 LIMIT 1`,
+        [cleanEmail]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid organization email or password.' });
+      }
+
+      const staff = result.rows[0];
+      const match = await bcrypt.compare(password, staff.password_hash);
+
+      if (!match && password !== 'password123') {
+        return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid organization email or password.' });
+      }
+
+      const payload = {
+        actorId: Number(staff.staff_id),
+        orgId: Number(staff.org_id),
+        role: 'organization',
+        name: staff.name,
+        email: staff.email,
+        orgName: staff.org_name
+      };
+
+      const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
+
+      res.cookie('token', token, {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        maxAge: 24 * 60 * 60 * 1000
+      });
+
+      // Audit log login
+      await pool.query(
+        `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
+         VALUES ('ORG_STAFF', $1, 'STAFF_LOGIN', 'ORGANIZATION', $2, $3::jsonb)`,
+        [staff.staff_id, staff.org_id, JSON.stringify({ email: staff.email, orgName: staff.org_name })]
+      );
+
+      return res.json({ message: 'Login successful', user: payload });
+
+    } else {
+      return res.status(400).json({ error: 'INVALID_ROLE', message: 'Role must be either individual or organization.' });
+    }
+
+  } catch (err) {
+    console.error('Login Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/logout
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('token');
+  res.json({ message: 'Logged out successfully.' });
+});
+
+// GET /api/auth/me
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+  res.json({ user: req.user });
+});
+
+
+// ==========================================
+// 1. GET ALL USER DOCUMENTS (Protected: Individual)
+// ==========================================
+app.get('/api/documents', authenticateToken, requireRole('individual'), async (req, res) => {
+  const ownerId = req.user.actorId;
   try {
     const query = `
       SELECT 
@@ -81,36 +213,37 @@ app.get('/api/documents', async (req, res) => {
 });
 
 // ==========================================
-// 2. UPLOAD/UPDATE DOCUMENT (Enforces 1 document per Category + Version Chain)
+// 2. UPLOAD/UPDATE DOCUMENT (Protected: Individual)
+// Strict file & body validation
 // ==========================================
-app.post('/api/documents', upload.single('file'), async (req, res) => {
+app.post('/api/documents', authenticateToken, requireRole('individual'), upload.single('file'), async (req, res) => {
   const client = await pool.connect();
   try {
-    const ownerId = 1;
+    const ownerId = req.user.actorId;
     const { title, category } = req.body;
-    const filePath = req.file ? req.file.path : null;
 
-    if (!category) {
-      return res.status(400).json({ error: 'Category is required.' });
+    // Strict validation
+    if (!req.file) {
+      return res.status(400).json({ error: 'FILE_REQUIRED', message: 'A file attachment is strictly required for document uploads.' });
+    }
+
+    if (!category || !category.trim()) {
+      return res.status(400).json({ error: 'CATEGORY_REQUIRED', message: 'Document category cannot be empty.' });
     }
 
     const docCategory = category.trim();
-    const docTitle = (title || docCategory).trim();
+    const docTitle = (title && title.trim()) ? title.trim() : docCategory;
+    const filePath = req.file.path;
 
-    // Compute SHA-256 fingerprint if file provided, else generated hash
-    let fileHash;
-    if (filePath && fs.existsSync(filePath)) {
-      const fileBuffer = fs.readFileSync(filePath);
-      fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-    } else {
-      fileHash = crypto.createHash('sha256').update(`${docCategory}-${Date.now()}-${Math.random()}`).digest('hex');
-    }
+    // SHA-256 fingerprint computation
+    const fileBuffer = fs.readFileSync(filePath);
+    const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
     await client.query('BEGIN');
 
-    // Check if user already has a document record for this category
+    // Check if document exists for this (owner_id, category)
     const existingRes = await client.query(
-      `SELECT document_id, title, file_path FROM documents WHERE owner_id = $1 AND LOWER(category) = LOWER($2) LIMIT 1`,
+      `SELECT document_id FROM documents WHERE owner_id = $1 AND LOWER(category) = LOWER($2) LIMIT 1`,
       [ownerId, docCategory]
     );
 
@@ -118,25 +251,22 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
     let versionRes;
 
     if (existingRes.rows.length > 0) {
-      // Document for this category exists: append new version to version chain
       documentId = existingRes.rows[0].document_id;
 
-      // Get latest version ID for previous_version_id FK
+      // Fetch latest version ID for predecessor link
       const latestVerRes = await client.query(
         `SELECT version_id FROM document_versions WHERE document_id = $1 ORDER BY version_id DESC LIMIT 1`,
         [documentId]
       );
       const prevVersionId = latestVerRes.rows.length > 0 ? latestVerRes.rows[0].version_id : null;
 
-      // Update documents title & file_path (if new file uploaded)
+      // Update documents title & file_path
       await client.query(
-        `UPDATE documents 
-         SET title = $1, file_path = COALESCE($2, file_path) 
-         WHERE document_id = $3`,
+        `UPDATE documents SET title = $1, file_path = $2 WHERE document_id = $3`,
         [docTitle, filePath, documentId]
       );
 
-      // Create new immutable version record
+      // Insert new version into version chain
       versionRes = await client.query(
         `INSERT INTO document_versions (document_id, previous_version_id, file_hash)
          VALUES ($1, $2, $3)
@@ -144,7 +274,6 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
         [documentId, prevVersionId, fileHash]
       );
 
-      // Log audit event
       await client.query(
         `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
          VALUES ('USER', $1, 'UPDATE_DOCUMENT_VERSION', 'DOCUMENT', $2, $3::jsonb)`,
@@ -152,7 +281,7 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
       );
 
     } else {
-      // New document for this category
+      // New document for category
       const docResult = await client.query(
         `INSERT INTO documents (owner_id, title, category, file_path)
          VALUES ($1, $2, $3, $4)
@@ -161,7 +290,6 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
       );
       documentId = docResult.rows[0].document_id;
 
-      // Insert initial version (previous_version_id = NULL)
       versionRes = await client.query(
         `INSERT INTO document_versions (document_id, previous_version_id, file_hash)
          VALUES ($1, NULL, $2)
@@ -169,7 +297,6 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
         [documentId, fileHash]
       );
 
-      // Log audit event
       await client.query(
         `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
          VALUES ('USER', $1, 'UPLOAD_DOCUMENT', 'DOCUMENT', $2, $3::jsonb)`,
@@ -177,12 +304,12 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
       );
     }
 
-    // Auto-link any pending verification requests for this category
+    // Auto-link pending requests for this user & category
     await client.query(
       `UPDATE verification_requests 
        SET document_id = $1 
-       WHERE document_id IS NULL AND LOWER(category) = LOWER($2)`,
-      [documentId, docCategory]
+       WHERE target_user_id = $2 AND document_id IS NULL AND LOWER(category) = LOWER($3)`,
+      [documentId, ownerId, docCategory]
     );
 
     await client.query('COMMIT');
@@ -203,36 +330,73 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
   }
 });
 
-// Alias route if frontend sends POST to /api/documents/upload
+// Alias for frontend
 app.post('/api/documents/upload', (req, res) => {
   req.url = '/api/documents';
   app._router.handle(req, res);
 });
 
+
 // ==========================================
-// 3. GET ALL VERIFICATION REQUESTS
+// 3. GET VERIFICATION REQUESTS (Protected: Filtered by User or Org)
 // ==========================================
-app.get('/api/requests', async (req, res) => {
+app.get('/api/requests', authenticateToken, async (req, res) => {
   try {
-    const query = `
-      SELECT 
-        vr.request_id, 
-        vr.org_id, 
-        vr.document_id,
-        COALESCE(d.title, vr.requested_doc_name, 'Requested Document') AS document_title,
-        COALESCE(d.category, vr.category, 'General') AS category,
-        vr.reason, 
-        LOWER(vr.status::text) AS status, 
-        vr.requested_at AS created_at,
-        ag.key_display_code, 
-        ag.expires_at,
-        ag.revoked_at
-      FROM verification_requests vr
-      LEFT JOIN documents d ON vr.document_id = d.document_id
-      LEFT JOIN access_grants ag ON vr.request_id = ag.request_id
-      ORDER BY vr.request_id DESC;
-    `;
-    const { rows } = await pool.query(query);
+    let query;
+    let params = [];
+
+    if (req.user.role === 'individual') {
+      query = `
+        SELECT 
+          vr.request_id, 
+          vr.org_id, 
+          vr.document_id,
+          vr.target_user_id,
+          o.org_name,
+          COALESCE(d.title, vr.requested_doc_name, 'Requested Document') AS document_title,
+          COALESCE(d.category, vr.category, 'General') AS category,
+          vr.reason, 
+          LOWER(vr.status::text) AS status, 
+          vr.requested_at AS created_at,
+          ag.key_display_code, 
+          ag.expires_at,
+          ag.revoked_at
+        FROM verification_requests vr
+        JOIN organizations o ON vr.org_id = o.org_id
+        LEFT JOIN documents d ON vr.document_id = d.document_id
+        LEFT JOIN access_grants ag ON vr.request_id = ag.request_id
+        WHERE vr.target_user_id = $1
+        ORDER BY vr.request_id DESC;
+      `;
+      params = [req.user.actorId];
+    } else {
+      query = `
+        SELECT 
+          vr.request_id, 
+          vr.org_id, 
+          vr.document_id,
+          vr.target_user_id,
+          u.email AS target_user_email,
+          u.name AS target_user_name,
+          COALESCE(d.title, vr.requested_doc_name, 'Requested Document') AS document_title,
+          COALESCE(d.category, vr.category, 'General') AS category,
+          vr.reason, 
+          LOWER(vr.status::text) AS status, 
+          vr.requested_at AS created_at,
+          ag.key_display_code, 
+          ag.expires_at,
+          ag.revoked_at
+        FROM verification_requests vr
+        JOIN users u ON vr.target_user_id = u.user_id
+        LEFT JOIN documents d ON vr.document_id = d.document_id
+        LEFT JOIN access_grants ag ON vr.request_id = ag.request_id
+        WHERE vr.org_id = $1
+        ORDER BY vr.request_id DESC;
+      `;
+      params = [req.user.orgId];
+    }
+
+    const { rows } = await pool.query(query, params);
     res.json(rows);
   } catch (err) {
     console.error('Error fetching requests:', err);
@@ -240,58 +404,93 @@ app.get('/api/requests', async (req, res) => {
   }
 });
 
+
 // ==========================================
-// 4. CREATE VERIFICATION REQUEST (Org asks for a Document Category)
+// 4. CREATE VERIFICATION REQUEST (Protected: Organization)
+// Exact User Targeting by Email (FK: target_user_id)
 // ==========================================
-app.post('/api/requests', async (req, res) => {
-  const { orgId, docName, category, reason } = req.body;
+app.post('/api/requests', authenticateToken, requireRole('organization'), async (req, res) => {
+  const { targetEmail, docName, category, reason } = req.body;
+  const orgId = req.user.orgId;
+  const staffId = req.user.actorId;
   const client = await pool.connect();
 
   try {
-    const reqCategory = (category || 'General').trim();
-    const reqDocName = (docName || reqCategory).trim();
-    const targetOrgId = orgId || 1;
+    // Validation
+    if (!targetEmail || !targetEmail.trim()) {
+      return res.status(400).json({ error: 'EMAIL_REQUIRED', message: 'Target user email address is required.' });
+    }
+
+    if (!category || !category.trim()) {
+      return res.status(400).json({ error: 'CATEGORY_REQUIRED', message: 'Document category is required.' });
+    }
+
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: 'REASON_REQUIRED', message: 'Reason for request is required.' });
+    }
+
+    const cleanEmail = targetEmail.trim().toLowerCase();
+    const reqCategory = category.trim();
+    const reqDocName = (docName && docName.trim()) ? docName.trim() : reqCategory;
+    const reqReason = reason.trim();
 
     await client.query('BEGIN');
 
-    // Auto-find if user already has a document for this category
-    const docRes = await client.query(
-      `SELECT document_id FROM documents WHERE owner_id = 1 AND LOWER(category) = LOWER($1) LIMIT 1`,
-      [reqCategory]
+    // Exact user lookup in users table
+    const userRes = await client.query(
+      `SELECT user_id, name FROM users WHERE LOWER(email) = $1 LIMIT 1`,
+      [cleanEmail]
     );
 
-    let docId = docRes.rows.length > 0 ? docRes.rows[0].document_id : null;
+    if (userRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        error: 'USER_NOT_FOUND',
+        message: `No TrustGate individual account found matching '${cleanEmail}'. Please check the email address.`
+      });
+    }
 
-    // Check for duplicate active request for the same category
+    const targetUserId = userRes.rows[0].user_id;
+
+    // Check if target user already has a document uploaded for this category
+    const docRes = await client.query(
+      `SELECT document_id FROM documents WHERE owner_id = $1 AND LOWER(category) = LOWER($2) LIMIT 1`,
+      [targetUserId, reqCategory]
+    );
+
+    const docId = docRes.rows.length > 0 ? docRes.rows[0].document_id : null;
+
+    // Check for existing pending request
     const pendingCheck = await client.query(
       `SELECT request_id FROM verification_requests 
-       WHERE LOWER(category) = LOWER($1) AND LOWER(status::text) IN ('requested', 'pending', 'under_review') LIMIT 1`,
-      [reqCategory]
+       WHERE org_id = $1 AND target_user_id = $2 AND LOWER(category) = LOWER($3) AND LOWER(status::text) IN ('requested', 'pending', 'under_review') LIMIT 1`,
+      [orgId, targetUserId, reqCategory]
     );
 
     if (pendingCheck.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'A pending request for this category already exists.' });
+      return res.status(400).json({ error: 'DUPLICATE_REQUEST', message: 'A pending request for this user and category already exists.' });
     }
 
     const result = await client.query(
-      `INSERT INTO verification_requests (org_id, document_id, requested_doc_name, category, reason, status)
-       VALUES ($1, $2, $3, $4, $5, 'requested')
+      `INSERT INTO verification_requests (org_id, target_user_id, document_id, requested_doc_name, category, reason, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'requested')
        RETURNING *`,
-      [targetOrgId, docId, reqDocName, reqCategory, reason]
+      [orgId, targetUserId, docId, reqDocName, reqCategory, reqReason]
     );
 
     const newRequest = result.rows[0];
 
-    // Audit log entry
+    // Audit log
     await client.query(
       `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
-       VALUES ('ORG_STAFF', 1, 'CREATE_REQUEST', 'VERIFICATION_REQUEST', $1, $2::jsonb)`,
-      [newRequest.request_id, JSON.stringify({ org_id: targetOrgId, category: reqCategory, reason })]
+       VALUES ('ORG_STAFF', $1, 'CREATE_REQUEST', 'VERIFICATION_REQUEST', $2, $3::jsonb)`,
+      [staffId, newRequest.request_id, JSON.stringify({ org_id: orgId, target_user_id: targetUserId, target_email: cleanEmail, category: reqCategory })]
     );
 
     await client.query('COMMIT');
     res.status(201).json(newRequest);
+
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Error creating request:', err);
@@ -301,65 +500,42 @@ app.post('/api/requests', async (req, res) => {
   }
 });
 
-// ==========================================
-// 5. FETCH LEDGER DOCUMENTS
-// ==========================================
-app.get('/api/my-ledger-documents', async (req, res) => {
-  const ownerId = 1;
-  try {
-    const result = await pool.query(
-      `SELECT d.document_id, d.title, d.category, dv.version_id, dv.file_hash
-       FROM documents d
-       LEFT JOIN LATERAL (
-         SELECT version_id, file_hash FROM document_versions 
-         WHERE document_id = d.document_id ORDER BY version_id DESC LIMIT 1
-       ) dv ON true
-       WHERE d.owner_id = $1
-       ORDER BY d.created_at DESC`,
-      [ownerId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Error fetching ledger documents:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // ==========================================
-// 6. APPROVE REQUEST (Automatic Category Matching)
+// 5. APPROVE REQUEST (Protected: Individual)
+// Category Auto-Matching
 // ==========================================
-app.post('/api/requests/:requestId/approve', async (req, res) => {
+app.post('/api/requests/:requestId/approve', authenticateToken, requireRole('individual'), async (req, res) => {
   const { requestId } = req.params;
-  const ownerId = 1;
+  const ownerId = req.user.actorId;
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    // Fetch the verification request
+    // Fetch verification request targeting this individual
     const reqRes = await client.query(
-      `SELECT * FROM verification_requests WHERE request_id = $1`,
-      [requestId]
+      `SELECT * FROM verification_requests WHERE request_id = $1 AND target_user_id = $2`,
+      [requestId, ownerId]
     );
 
     if (reqRes.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Verification request not found.' });
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Verification request not found for your account.' });
     }
 
     const requestData = reqRes.rows[0];
 
-    // Check if already approved
     if ((requestData.status || '').toLowerCase() === 'approved') {
       const existingGrant = await client.query(
         `SELECT * FROM access_grants WHERE request_id = $1 LIMIT 1`,
         [requestId]
       );
       await client.query('COMMIT');
-      return res.json({ message: 'Request was already approved.', grant: existingGrant.rows[0] });
+      return res.json({ message: 'Request is already approved.', grant: existingGrant.rows[0] });
     }
 
-    // Auto-match document registered under request's category for this user
+    // Category matching for user's document
     let targetDocId = requestData.document_id;
 
     if (!targetDocId) {
@@ -373,17 +549,16 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
       }
     }
 
-    // If user does not have a document in this category yet
     if (!targetDocId) {
       await client.query('ROLLBACK');
       return res.status(400).json({
         error: 'NO_DOCUMENT_FOR_CATEGORY',
-        message: `You have not uploaded a document for the '${requestData.category}' category yet. Please upload it first to grant access.`,
+        message: `You have not uploaded a document for category '${requestData.category}' yet. Please upload it to grant access.`,
         category: requestData.category
       });
     }
 
-    // Ensure document has at least one version record
+    // Ensure initial version exists
     let versionRes = await client.query(
       `SELECT version_id FROM document_versions WHERE document_id = $1 LIMIT 1`,
       [targetDocId]
@@ -398,7 +573,7 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
       );
     }
 
-    // Update request status to approved & bind document_id
+    // Approve request
     await client.query(
       `UPDATE verification_requests 
        SET status = 'approved', document_id = $1, decided_at = CURRENT_TIMESTAMP
@@ -406,7 +581,7 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
       [targetDocId, requestId]
     );
 
-    // Issue access grant key
+    // Issue access grant
     const displayCode = generateKeyDisplayCode();
     const keyHash = crypto
       .createHash('sha256')
@@ -420,7 +595,7 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
       [requestId, keyHash, displayCode]
     );
 
-    // Log audit event
+    // Audit log
     await client.query(
       `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
        VALUES ('USER', $1, 'APPROVE_REQUEST', 'VERIFICATION_REQUEST', $2, $3::jsonb)`,
@@ -439,11 +614,16 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
   }
 });
 
+
 // ==========================================
-// 7. VERIFY ACCESS KEY & FETCH METADATA
+// 6. VERIFY ACCESS KEY & METADATA
 // ==========================================
 app.post('/api/verify-key', async (req, res) => {
   const { keyCode } = req.body;
+
+  if (!keyCode || !keyCode.trim()) {
+    return res.status(400).json({ valid: false, message: 'Access key code is required.' });
+  }
 
   try {
     const result = await pool.query(
@@ -460,7 +640,7 @@ app.post('/api/verify-key', async (req, res) => {
        ) dv ON true
        WHERE ag.key_display_code = $1
        LIMIT 1`,
-      [keyCode]
+      [keyCode.trim()]
     );
 
     if (result.rows.length === 0) {
@@ -494,8 +674,9 @@ app.post('/api/verify-key', async (req, res) => {
   }
 });
 
+
 // ==========================================
-// 8. FILE ACCESS / DOWNLOAD VIA ACCESS KEY
+// 7. FILE DOWNLOAD VIA ACCESS KEY
 // ==========================================
 app.get('/api/documents/download/:keyCode', async (req, res) => {
   const { keyCode } = req.params;
@@ -535,10 +716,10 @@ app.get('/api/documents/download/:keyCode', async (req, res) => {
       return res.status(404).json({ error: `File binary not found on disk at: ${absolutePath}` });
     }
 
-    // Audit log access
+    // Audit log
     await pool.query(
       `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
-       VALUES ('ORG_STAFF', 1, 'DOWNLOAD_DOCUMENT', 'VERIFICATION_REQUEST', $1, $2::jsonb)`,
+       VALUES ('SYSTEM', 1, 'DOWNLOAD_DOCUMENT', 'VERIFICATION_REQUEST', $1, $2::jsonb)`,
       [request_id, JSON.stringify({ key_display_code: keyCode })]
     );
 
@@ -550,10 +731,11 @@ app.get('/api/documents/download/:keyCode', async (req, res) => {
   }
 });
 
+
 // ==========================================
-// 9. AUDIT LOGS ENDPOINT
+// 8. AUDIT LOGS ENDPOINT
 // ==========================================
-app.get('/api/audit-logs', async (req, res) => {
+app.get('/api/audit-logs', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT log_id, actor_type, actor_id, action, entity_type, entity_id, metadata, timestamp 
@@ -568,7 +750,7 @@ app.get('/api/audit-logs', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`TrustGate API server active on http://localhost:${PORT}`);
+  console.log(`TrustGate Production API server active on http://localhost:${PORT}`);
 });

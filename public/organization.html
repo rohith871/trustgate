@@ -6,60 +6,13 @@
 <title>TrustGate — Organization</title>
 <link rel="stylesheet" href="css/styles.css">
 <style>
-  #orgGate{ display:flex; }
-  #orgApp{ display:none; }
+  #orgGate{ display:none; }
+  #orgApp{ display:block; }
   .upload-box { cursor: pointer; border: 2px dashed #ccc; padding: 16px; text-align: center; border-radius: 6px; display: block; }
   .upload-box:hover { border-color: #3182ce; background: #f7fafc; }
 </style>
 </head>
 <body>
-
-<!-- ============ ORG VERIFICATION GATE ============ -->
-<div id="orgGate">
-  <div class="gate-box">
-
-    <div id="gateForm">
-      <div class="gate-head">
-        <div class="gate-badge">🏛</div>
-        <p class="gate-title">Register your organization</p>
-      </div>
-      <p class="gate-sub">Organizations must be verified before they can send document requests to users — this keeps the request side of TrustGate limited to accountable institutions.</p>
-
-      <div class="field"><label>Organization name</label><input type="text" id="orgName" placeholder="e.g. City General Hospital"></div>
-      <div class="field"><label>Organization type</label>
-        <select id="orgType"><option>Educational institution</option><option>Employer</option><option>Hospital</option><option>Bank / NBFC</option></select>
-      </div>
-      <div class="field"><label>Registration / license number</label><input type="text" id="orgRegNo" placeholder="e.g. UDISE / CIN / IFSC-linked ID"></div>
-      
-      <div class="field">
-        <label>Proof of registration</label>
-        <label for="orgProofFileInput" class="upload-box" id="orgUploadLabel">
-          📄 <b id="orgUploadFileName">Upload certificate or license</b><br>PDF, up to 10MB
-        </label>
-        <input type="file" id="orgProofFileInput" accept=".pdf,.png,.jpg,.jpeg" style="display:none;" onchange="handleOrgFileSelect(this)">
-      </div>
-
-      <button class="gate-submit" onclick="submitGate()">Submit for verification</button>
-      <p style="text-align:center; margin-top:16px;"><a href="index.html" style="font-size:12px; color:var(--ink-faint);">← Back</a></p>
-    </div>
-
-    <div id="gatePending" style="display:none;" class="pending-view">
-      <div class="pending-ring"></div>
-      <p class="pending-title">Verification pending</p>
-      <p class="pending-sub">Your registration and documents have been queued for review by the TrustGate compliance team. This usually takes 1–2 business days. You'll be notified by email once approved.</p>
-      <button class="sim-btn" onclick="approveGate()">Simulate admin approval →</button>
-      <div class="sim-note">(Demo control — in production this happens after manual review)</div>
-    </div>
-
-    <div id="gateApproved" style="display:none;" class="approved-view">
-      <div class="approved-check"></div>
-      <p class="pending-title">Organization verified</p>
-      <p class="pending-sub" id="approvedText">You are now a verified TrustGate requester. You can start sending document requests to users.</p>
-      <button class="continue-btn" onclick="enterOrgApp()">Continue to dashboard →</button>
-    </div>
-
-  </div>
-</div>
 
 <!-- ============ ORGANIZATION APP ============ -->
 <div id="orgApp">
@@ -79,16 +32,17 @@
       </nav>
       <div class="sidebar-foot">
         <span class="role-chip">ROLE · ORG_VERIFIER</span><br>
-        City General Hospital<br>
-        Priya M. — Records Officer
-        <a href="index.html" style="display:block; margin-top:10px;"><button class="switch-role">↺ Switch role</button></a>
+        <span id="orgDisplayName" style="font-weight:700; display:block; margin-top:2px;">City General Hospital</span>
+        <span id="orgStaffName" style="display:block; font-size:12px; color:#e2e8f0;">Priya M. — Records Officer</span>
+        <span id="orgStaffEmail" style="color:var(--ink-faint); font-size:11px; display:block; margin-bottom:8px;">priya.m@cgh.org</span>
+        <button class="switch-role" onclick="handleLogout()" style="width:100%; border:1px solid #dc2626; color:#ef4444; background:transparent; padding:6px; border-radius:4px; cursor:pointer; font-weight:600;">⎋ Logout</button>
       </div>
     </aside>
     <main>
       <!-- OVERVIEW -->
       <section id="orgOverview" class="view active">
         <div class="topline">
-          <div><h1>Overview</h1><p class="subhead">City General Hospital's activity across TrustGate.</p></div>
+          <div><h1 id="orgOverviewTitle">Overview</h1><p class="subhead">Organization document request & verification activity across TrustGate.</p></div>
           <button class="new-btn" onclick="switchTab('sendRequest')">＋ Send Request</button>
         </div>
         <div class="stats">
@@ -100,14 +54,19 @@
         <div class="panel" id="auditOrgBody"></div>
       </section>
 
-      <!-- SEND REQUEST -->
+      <!-- SEND REQUEST (Strict Exact Target Email Validation) -->
       <section id="sendRequest" class="view">
-        <div class="topline"><div><h1>Send a Request</h1><p class="subhead">Request document access by category. When the user approves, access is granted automatically to their single document in that category.</p></div></div>
+        <div class="topline"><div><h1>Send a Request</h1><p class="subhead">Target an individual account by exact email address. When approved, access is granted automatically to their single document in that category.</p></div></div>
         <div class="panel" style="max-width:560px;">
-          <div class="drawer-body">
+          <form class="drawer-body" onsubmit="event.preventDefault(); sendNewRequest();">
             <div class="field">
-              <label>Document category</label>
-              <select id="reqCategory">
+              <label>Target Individual's Email Address <span style="color:red;">* (Exact Match)</span></label>
+              <input type="email" id="reqTargetEmail" required placeholder="e.g. rohan.k@trustgate.id">
+            </div>
+            <div class="field">
+              <label>Document category <span style="color:red;">*</span></label>
+              <select id="reqCategory" required>
+                <option value="">Select category...</option>
                 <option value="Degree / Marksheet">Degree / Marksheet</option>
                 <option value="KYC Document">KYC Document</option>
                 <option value="Medical Record">Medical Record</option>
@@ -120,21 +79,20 @@
                 <option value="Certificates / Credentials">Certificates / Credentials</option>
               </select>
             </div>
-            <div class="field"><label>Document name / label</label><input type="text" id="reqDocName" placeholder="e.g. Vaccination Record / PAN Card"></div>
-            <div class="field"><label>User's TrustGate ID or email</label><input type="text" id="reqUser" value="rohan.k@trustgate.id"></div>
-            <div class="field"><label>Reason for request</label><input type="text" id="reqReason" placeholder="e.g. Pre-admission verification"></div>
-            <button class="gate-submit" onclick="sendNewRequest()">Send request</button>
-            <p class="sim-note" style="margin-top:12px;">This appears instantly in the recipient's Incoming Requests (open individual.html to see it land there).</p>
-          </div>
+            <div class="field"><label>Document Label / Title (Optional)</label><input type="text" id="reqDocName" placeholder="e.g. Vaccination Record / PAN Card"></div>
+            <div class="field"><label>Reason for request <span style="color:red;">*</span></label><input type="text" id="reqReason" required placeholder="e.g. Pre-admission verification"></div>
+            <button type="submit" class="gate-submit">Send request →</button>
+            <p class="sim-note" style="margin-top:12px;">The system looks up the exact <code>user_id</code> for this email. If no account exists, request submission is rejected.</p>
+          </form>
         </div>
       </section>
 
       <!-- REQUESTS SENT -->
       <section id="requestsSent" class="view">
-        <div class="topline"><div><h1>Requests Sent</h1><p class="subhead">Track every request raised by your organization.</p></div></div>
+        <div class="topline"><div><h1>Requests Sent</h1><p class="subhead">Track every request raised by your organization by target user.</p></div></div>
         <div class="panel">
           <div class="table-scroll"><table>
-            <thead><tr><th>Requested Category & Document</th><th>Sent to</th><th>Status</th><th>Sent</th></tr></thead>
+            <thead><tr><th>Target User</th><th>Category & Label</th><th>Status</th><th>Sent Date</th></tr></thead>
             <tbody id="sentBody">
               <!-- Dynamically populated from PostgreSQL by app.js -->
             </tbody>
@@ -144,13 +102,13 @@
 
       <!-- DOCUMENTS RECEIVED -->
       <section id="docsReceived" class="view">
-        <div class="topline"><div><h1>Documents Received</h1><p class="subhead">Active access keys for user documents.</p></div></div>
+        <div class="topline"><div><h1>Documents Received</h1><p class="subhead">Active access keys for target user documents.</p></div></div>
         <div class="panel">
           <div class="table-scroll"><table>
             <thead>
               <tr>
-                <th>Document Category</th>
-                <th>From</th>
+                <th>Target User</th>
+                <th>Category</th>
                 <th>Access key</th>
                 <th>Expires</th>
                 <th>Action</th>

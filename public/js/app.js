@@ -1,6 +1,8 @@
 /* ============================================================
-   TrustGate — Real-time Client Application Logic
+   TrustGate — Client Application & Authorization Engine
    ============================================================ */
+
+let currentUserSession = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   if (typeof initTabNav === 'function') {
@@ -8,7 +10,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   const isIndividualPage = !!document.getElementById('myDocsBody');
-  const isOrgPage = !!document.getElementById('orgGate') || !!document.getElementById('sentBody');
+  const isOrgPage = !!document.getElementById('sentBody');
+
+  // Verify Auth Session
+  const authenticated = await checkAuth(isIndividualPage ? 'individual' : (isOrgPage ? 'organization' : null));
+  if (!authenticated && (isIndividualPage || isOrgPage)) return;
 
   if (isIndividualPage) {
     initIndividualDashboard();
@@ -17,13 +23,68 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
+async function checkAuth(requiredRole) {
+  try {
+    const res = await fetch('/api/auth/me');
+    if (!res.ok) {
+      if (requiredRole) window.location.href = `login.html?role=${requiredRole}`;
+      return false;
+    }
+
+    const data = await res.json();
+    currentUserSession = data.user;
+
+    if (requiredRole && currentUserSession.role !== requiredRole) {
+      if (currentUserSession.role === 'organization') {
+        window.location.href = 'organization.html';
+      } else {
+        window.location.href = 'individual.html';
+      }
+      return false;
+    }
+
+    updateUserProfileUI(currentUserSession);
+    return true;
+  } catch (err) {
+    console.error('Session check error:', err);
+    if (requiredRole) window.location.href = `login.html?role=${requiredRole}`;
+    return false;
+  }
+}
+
+function updateUserProfileUI(user) {
+  if (!user) return;
+
+  const nameEl = document.getElementById('userDisplayName');
+  const emailEl = document.getElementById('userDisplayEmail');
+  if (nameEl) nameEl.textContent = user.name || 'Individual User';
+  if (emailEl) emailEl.textContent = user.email || '';
+
+  const orgNameEl = document.getElementById('orgDisplayName');
+  const orgStaffNameEl = document.getElementById('orgStaffName');
+  const orgStaffEmailEl = document.getElementById('orgStaffEmail');
+  const orgOverviewTitle = document.getElementById('orgOverviewTitle');
+
+  if (orgNameEl) orgNameEl.textContent = user.orgName || 'Verified Organization';
+  if (orgStaffNameEl) orgStaffNameEl.textContent = `${user.name || 'Staff Member'} — Records Officer`;
+  if (orgStaffEmailEl) orgStaffEmailEl.textContent = user.email || '';
+  if (orgOverviewTitle) orgOverviewTitle.textContent = `${user.orgName || 'Organization'}'s Dashboard`;
+}
+
+async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (_) {}
+  window.location.href = 'login.html';
+}
+
 /* ============================================================
    INDIVIDUAL DASHBOARD LOGIC
    ============================================================ */
 
 function initIndividualDashboard() {
   renderIndividualAll();
-  setInterval(renderIndividualAll, 2500);
+  setInterval(renderIndividualAll, 3000);
 }
 
 function openUploadModal(preselectCategory) {
@@ -69,17 +130,27 @@ async function handleDocumentUpload(event) {
   const categorySelect = document.getElementById('doc-category');
   const fileInput = document.getElementById('doc-file');
 
+  // Strict Validation
   if (!categorySelect.value) {
     alert('Please select a document category.');
     return;
   }
 
-  const formData = new FormData();
-  formData.append('title', titleInput.value || categorySelect.value);
-  formData.append('category', categorySelect.value);
-  if (fileInput.files[0]) {
-    formData.append('file', fileInput.files[0]);
+  if (!fileInput.files || !fileInput.files[0]) {
+    alert('⚠️ Strict Upload Constraint: You MUST select a file from your computer.');
+    return;
   }
+
+  const titleVal = titleInput.value ? titleInput.value.trim() : '';
+  if (!titleVal) {
+    alert('Please provide a document title or label.');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('title', titleVal);
+  formData.append('category', categorySelect.value);
+  formData.append('file', fileInput.files[0]);
 
   try {
     const res = await fetch('/api/documents/upload', {
@@ -120,6 +191,7 @@ async function filterDocuments(query) {
 async function renderMyDocuments() {
   try {
     const res = await fetch('/api/documents');
+    if (res.status === 401) { window.location.href = 'login.html'; return; }
     const docs = await res.json();
     renderMyDocumentsList(docs);
   } catch (err) {
@@ -153,6 +225,7 @@ async function renderIncoming() {
 
   try {
     const res = await fetch('/api/requests');
+    if (res.status === 401) { window.location.href = 'login.html'; return; }
     const requests = await res.json();
 
     const pending = requests.filter(r => {
@@ -173,8 +246,8 @@ async function renderIncoming() {
       const formattedDate = r.created_at ? new Date(r.created_at).toLocaleDateString() : 'Just now';
       return `
         <tr class="row">
-          <td><div class="doc-name">${r.category}</div><div class="doc-meta">Requested: ${r.document_title}</div></td>
-          <td>Organization #${r.org_id || 1}</td>
+          <td><div class="doc-name">${r.category}</div><div class="doc-meta">Requested label: ${r.document_title}</div></td>
+          <td>${r.org_name || `Organization #${r.org_id}`}</td>
           <td class="doc-meta">${r.reason || 'Verification request'}</td>
           <td class="expiry">${formattedDate}</td>
           <td><div class="row-actions">
@@ -194,6 +267,7 @@ async function renderSharedAccess() {
 
   try {
     const res = await fetch('/api/requests');
+    if (res.status === 401) return;
     const requests = await res.json();
     const approved = requests.filter(r => (r.status || '').toLowerCase() === 'approved');
 
@@ -206,7 +280,7 @@ async function renderSharedAccess() {
     sharedBody.innerHTML = approved.length ? approved.map((r) => `
       <tr class="row">
         <td><div class="doc-name">${r.category}</div><div class="doc-meta">${r.document_title}</div></td>
-        <td>Organization #${r.org_id || 1}</td>
+        <td>${r.org_name || `Organization #${r.org_id}`}</td>
         <td><span class="key-chip">${r.key_display_code || 'TG-ACTIVE'}</span></td>
         <td class="expiry">24 Hours</td>
         <td><div class="row-actions"><span class="badge approved">Active</span></div></td>
@@ -220,11 +294,12 @@ async function renderSharedAccess() {
 async function renderAuditLogs() {
   try {
     const res = await fetch('/api/audit-logs');
+    if (!res.ok) return;
     const logs = await res.json();
 
     const formattedLogs = logs.map(l => ({
       time: new Date(l.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      main: `${l.actor_type} perform ${l.action} on ${l.entity_type} #${l.entity_id}`,
+      main: `${l.actor_type} performed ${l.action} on ${l.entity_type} #${l.entity_id}`,
       sub: l.metadata ? JSON.stringify(l.metadata) : ''
     }));
 
@@ -245,7 +320,6 @@ async function renderIndividualAll() {
   await renderAuditLogs();
 }
 
-// Single-click automatic category approval
 async function handleApprove(requestId) {
   try {
     const approveRes = await fetch(`/api/requests/${requestId}/approve`, {
@@ -257,13 +331,13 @@ async function handleApprove(requestId) {
 
     if (approveRes.ok) {
       if (typeof openKeyModal === 'function' && data.grant) {
-        openKeyModal('Organization #1', 'Category Document', data.grant.key_display_code, 'Expires in 24 hours');
+        openKeyModal('Organization', 'Category Document', data.grant.key_display_code, 'Expires in 24 hours');
       } else {
-        alert(`✓ Access Granted Automatically!\nAccess Key: ${data.grant.key_display_code}`);
+        alert(`✓ Access Granted Automatically!\nAccess Key Code: ${data.grant.key_display_code}`);
       }
       renderIndividualAll();
     } else if (data.error === 'NO_DOCUMENT_FOR_CATEGORY') {
-      const wantUpload = confirm(`You do not have a document stored for category '${data.category}' yet.\n\nWould you like to upload a document for '${data.category}' now?`);
+      const wantUpload = confirm(`You do not have a document stored for category '${data.category}' yet.\n\nWould you like to upload a file for '${data.category}' now?`);
       if (wantUpload) {
         openUploadModal(data.category);
       }
@@ -311,47 +385,20 @@ function closeDrawer() {
   document.getElementById('drawer')?.classList.remove('open');
 }
 
+
 /* ============================================================
    ORGANIZATION DASHBOARD LOGIC
    ============================================================ */
 
 function initOrgDashboard() {
   renderOrgAll();
-  setInterval(renderOrgAll, 2500);
-}
-
-function handleOrgFileSelect(input) {
-  if (input.files && input.files[0]) {
-    const label = document.getElementById('orgUploadFileName');
-    if (label) label.textContent = `Selected: ${input.files[0].name}`;
-  }
-}
-
-function submitGate() {
-  const gateForm = document.getElementById('gateForm');
-  const gatePending = document.getElementById('gatePending');
-  if (gateForm) gateForm.style.display = 'none';
-  if (gatePending) gatePending.style.display = 'block';
-}
-
-function approveGate() {
-  const gatePending = document.getElementById('gatePending');
-  const gateApproved = document.getElementById('gateApproved');
-  if (gatePending) gatePending.style.display = 'none';
-  if (gateApproved) gateApproved.style.display = 'block';
-}
-
-function enterOrgApp() {
-  const gate = document.getElementById('orgGate');
-  const app = document.getElementById('orgApp');
-  if (gate) gate.style.display = 'none';
-  if (app) app.style.display = 'block';
-  renderOrgAll();
+  setInterval(renderOrgAll, 3000);
 }
 
 async function renderOverviewStats() {
   try {
     const res = await fetch('/api/requests');
+    if (res.status === 401) { window.location.href = 'login.html'; return; }
     const requests = await res.json();
 
     const approved = requests.filter(r => (r.status || '').toLowerCase() === 'approved');
@@ -378,15 +425,17 @@ async function renderRequestsSent() {
 
   try {
     const res = await fetch('/api/requests');
+    if (res.status === 401) return;
     const requests = await res.json();
 
     sentBody.innerHTML = requests.length ? requests.map((r) => {
       const statusText = r.status ? r.status.toUpperCase() : 'PENDING';
       const formattedDate = r.created_at ? new Date(r.created_at).toLocaleDateString() : 'Just now';
+      const targetUserDisplay = r.target_user_email ? `${r.target_user_name} (${r.target_user_email})` : `User #${r.target_user_id}`;
       return `
         <tr class="row">
+          <td><div class="doc-name">${targetUserDisplay}</div></td>
           <td><div class="doc-name">${r.category}</div><div class="doc-meta">${r.document_title}</div></td>
-          <td>Individual User</td>
           <td><span class="badge ${(r.status || '').toLowerCase()}">${statusText}</span></td>
           <td class="expiry">${formattedDate}</td>
         </tr>`;
@@ -406,13 +455,14 @@ async function renderDocsReceived() {
 
   try {
     const res = await fetch('/api/requests');
+    if (res.status === 401) return;
     const requests = await res.json();
     const approved = requests.filter(r => (r.status || '').toLowerCase() === 'approved');
 
     receivedBody.innerHTML = approved.length ? approved.map((r) => `
       <tr class="row">
+        <td><div class="doc-name">${r.target_user_name || 'Individual User'}</div><div class="doc-meta">${r.target_user_email || ''}</div></td>
         <td><div class="doc-name">${r.category}</div><div class="doc-meta">${r.document_title}</div></td>
-        <td>Individual User</td>
         <td><span class="key-chip">${r.key_display_code || 'GRANTED'}</span></td>
         <td class="expiry">Valid</td>
         <td>
@@ -437,18 +487,29 @@ function renderOrgAll() {
 }
 
 async function sendNewRequest() {
-  const docInput = document.getElementById('reqDocName');
+  const targetEmailInput = document.getElementById('reqTargetEmail');
   const catInput = document.getElementById('reqCategory');
+  const docInput = document.getElementById('reqDocName');
   const reasonInput = document.getElementById('reqReason');
 
-  if (!catInput || !reasonInput) return;
+  if (!targetEmailInput || !catInput || !reasonInput) return;
 
+  const targetEmail = targetEmailInput.value.trim();
   const category = catInput.value.trim();
   const docName = docInput && docInput.value.trim() ? docInput.value.trim() : category;
   const reason = reasonInput.value.trim();
 
-  if (!category || !reason) {
-    alert('Please provide category and reason.');
+  // Strict Form Validation
+  if (!targetEmail) {
+    alert('Please enter the target user\'s exact email address.');
+    return;
+  }
+  if (!category) {
+    alert('Please select a document category.');
+    return;
+  }
+  if (!reason) {
+    alert('Please provide a reason for the verification request.');
     return;
   }
 
@@ -457,7 +518,7 @@ async function sendNewRequest() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        orgId: 1,
+        targetEmail: targetEmail,
         docName: docName,
         category: category,
         reason: reason 
@@ -467,14 +528,18 @@ async function sendNewRequest() {
     const data = await res.json();
 
     if (res.ok) {
-      alert('Request sent successfully!');
+      alert('✓ Verification Request Sent Successfully!');
+      targetEmailInput.value = '';
       if (docInput) docInput.value = '';
       reasonInput.value = '';
       renderOrgAll();
+    } else if (res.status === 404 && data.error === 'USER_NOT_FOUND') {
+      alert(`⚠️ User Not Found:\n${data.message}`);
     } else {
-      alert('Failed to send request: ' + (data.error || 'Duplicate or invalid request'));
+      alert('Failed to send request: ' + (data.message || data.error));
     }
   } catch (err) {
     console.error('Error submitting request:', err);
+    alert('Failed to connect to backend server.');
   }
 }

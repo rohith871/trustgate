@@ -23,9 +23,9 @@
     </nav>
     <div class="sidebar-foot">
       <span class="role-chip">ROLE · DOCUMENT_OWNER</span><br>
-      Rohan Krishnan<br>
-      rohan.k@trustgate.id
-      <a href="index.html" style="display:block; margin-top:10px;"><button class="switch-role">↺ Switch role</button></a>
+      <span id="userDisplayName" style="font-weight:600; display:block; margin-top:2px;">Rohan Krishnan</span>
+      <span id="userDisplayEmail" style="color:var(--ink-faint); font-size:12px; display:block; margin-bottom:8px;">rohan.k@trustgate.id</span>
+      <button class="switch-role" onclick="handleLogout()" style="width:100%; border:1px solid #dc2626; color:#ef4444; background:transparent; padding:6px; border-radius:4px; cursor:pointer; font-weight:600;">⎋ Logout</button>
     </div>
   </aside>
 
@@ -138,8 +138,9 @@
     <form id="upload-doc-form" onsubmit="handleDocumentUpload(event)">
       
       <div style="margin-bottom: 16px;">
-        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Category</label>
-        <select id="doc-category" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: #fff; color: #111827;">
+        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Category <span style="color:red;">*</span></label>
+        <select id="doc-category" required style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: #fff; color: #111827;">
+          <option value="">Select a category...</option>
           <option value="Degree / Marksheet">Degree / Marksheet</option>
           <option value="KYC Document">KYC Document</option>
           <option value="Medical Record">Medical Record</option>
@@ -154,17 +155,17 @@
       </div>
 
       <div style="margin-bottom: 16px;">
-        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Document Title / Label</label>
+        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Document Title / Label <span style="color:red;">*</span></label>
         <input type="text" id="doc-title" required placeholder="e.g. Passport Copy / B.Tech Certificate" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: #fff; color: #111827;">
       </div>
 
       <div style="margin-bottom: 24px;">
-        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Select File</label>
+        <label style="display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px;">Select File <span style="color:red;">* (Required)</span></label>
         <label for="doc-file" style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; border: 2px dashed #3b82f6; border-radius: 8px; background: #eff6ff; cursor: pointer; text-align: center;">
           <span style="font-size: 24px; margin-bottom: 6px;">📄</span>
           <span id="file-upload-label" style="font-size: 13px; font-weight: 600; color: #2563eb;">Click to choose a file from your computer</span>
         </label>
-        <input type="file" id="doc-file" onchange="handleFileSelect(this)" style="display: none;">
+        <input type="file" id="doc-file" required onchange="handleFileSelect(this)" style="display: none;">
       </div>
 
       <div style="display: flex; justify-content: flex-end; gap: 12px;">

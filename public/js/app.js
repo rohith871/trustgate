@@ -23,12 +23,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function initIndividualDashboard() {
   renderIndividualAll();
-  setInterval(renderIndividualAll, 2000);
+  setInterval(renderIndividualAll, 2500);
 }
 
-function openUploadModal() {
+function openUploadModal(preselectCategory) {
   const modal = document.getElementById('uploadModalScrim');
   if (modal) modal.style.display = 'flex';
+
+  if (preselectCategory) {
+    const categorySelect = document.getElementById('doc-category');
+    if (categorySelect) categorySelect.value = preselectCategory;
+  }
 }
 
 function closeUploadModal() {
@@ -64,13 +69,13 @@ async function handleDocumentUpload(event) {
   const categorySelect = document.getElementById('doc-category');
   const fileInput = document.getElementById('doc-file');
 
-  if (!titleInput.value) {
-    alert('Please enter a document title.');
+  if (!categorySelect.value) {
+    alert('Please select a document category.');
     return;
   }
 
   const formData = new FormData();
-  formData.append('title', titleInput.value);
+  formData.append('title', titleInput.value || categorySelect.value);
   formData.append('category', categorySelect.value);
   if (fileInput.files[0]) {
     formData.append('file', fileInput.files[0]);
@@ -79,15 +84,15 @@ async function handleDocumentUpload(event) {
   try {
     const res = await fetch('/api/documents/upload', {
       method: 'POST',
-      body: formData // Sends binary multipart data
+      body: formData
     });
 
     const data = await res.json();
 
     if (res.ok) {
-      alert(`✓ Document uploaded with authentic fingerprint!\nSHA-256: ${data.version.file_hash.substring(0, 16)}...`);
-      if (typeof closeUploadModal === 'function') closeUploadModal();
-      if (typeof renderIndividualAll === 'function') renderIndividualAll();
+      alert(`✓ Document saved to ledger!\nCategory: ${data.category}\nHash: ${data.version.file_hash.substring(0, 16)}...`);
+      closeUploadModal();
+      renderIndividualAll();
     } else {
       alert('Upload Error: ' + (data.message || data.error));
     }
@@ -131,14 +136,15 @@ function renderMyDocumentsList(docs) {
 
   body.innerHTML = docs.length ? docs.map((d) => {
     const hashStr = d.file_hash ? d.file_hash.substring(0, 16) + '...' : 'Pending';
+    const verText = d.version_count ? `v${d.version_count}.0` : 'v1.0';
     return `<tr class="row" onclick="openDrawer(${d.document_id})">
-      <td><div class="doc-name">${d.title || 'Untitled Document'}</div><div class="doc-meta">Category: ${d.category || 'General'}</div></td>
-      <td><span class="version-chip">v1.0</span></td>
+      <td><div class="doc-name">${d.category}</div><div class="doc-meta">Label: ${d.title || d.category}</div></td>
+      <td><span class="version-chip">${verText}</span></td>
       <td><span class="hash">${hashStr}</span></td>
       <td><span class="badge approved">Stored</span></td>
       <td><div class="row-actions"><button class="icon-btn" onclick="event.stopPropagation()">↗</button></div></td>
     </tr>`;
-  }).join('') : `<tr><td colspan="5" style="color:var(--ink-faint); text-align:center; padding:32px;">No documents stored.</td></tr>`;
+  }).join('') : `<tr><td colspan="5" style="color:var(--ink-faint); text-align:center; padding:32px;">No category documents stored yet.</td></tr>`;
 }
 
 async function renderIncoming() {
@@ -167,7 +173,7 @@ async function renderIncoming() {
       const formattedDate = r.created_at ? new Date(r.created_at).toLocaleDateString() : 'Just now';
       return `
         <tr class="row">
-          <td><div class="doc-name">${r.document_title || 'Requested Document'}</div></td>
+          <td><div class="doc-name">${r.category}</div><div class="doc-meta">Requested: ${r.document_title}</div></td>
           <td>Organization #${r.org_id || 1}</td>
           <td class="doc-meta">${r.reason || 'Verification request'}</td>
           <td class="expiry">${formattedDate}</td>
@@ -199,7 +205,7 @@ async function renderSharedAccess() {
 
     sharedBody.innerHTML = approved.length ? approved.map((r) => `
       <tr class="row">
-        <td><div class="doc-name">${r.document_title || 'Document'}</div></td>
+        <td><div class="doc-name">${r.category}</div><div class="doc-meta">${r.document_title}</div></td>
         <td>Organization #${r.org_id || 1}</td>
         <td><span class="key-chip">${r.key_display_code || 'TG-ACTIVE'}</span></td>
         <td class="expiry">24 Hours</td>
@@ -211,93 +217,65 @@ async function renderSharedAccess() {
   }
 }
 
+async function renderAuditLogs() {
+  try {
+    const res = await fetch('/api/audit-logs');
+    const logs = await res.json();
+
+    const formattedLogs = logs.map(l => ({
+      time: new Date(l.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      main: `${l.actor_type} perform ${l.action} on ${l.entity_type} #${l.entity_id}`,
+      sub: l.metadata ? JSON.stringify(l.metadata) : ''
+    }));
+
+    if (typeof renderAuditList === 'function') {
+      renderAuditList('auditIndividualBody', formattedLogs);
+      renderAuditList('auditOrgBody', formattedLogs);
+      renderAuditList('auditOrgBody2', formattedLogs);
+    }
+  } catch (err) {
+    console.error('Error fetching audit logs:', err);
+  }
+}
+
 async function renderIndividualAll() {
   await renderMyDocuments();
   await renderIncoming();
   await renderSharedAccess();
+  await renderAuditLogs();
 }
 
-let selectedDocIdForApproval = null;
-
-// 1. Triggered when user clicks 'Approve' button on any request row
+// Single-click automatic category approval
 async function handleApprove(requestId) {
-  try {
-    const ledgerRes = await fetch('/api/my-ledger-documents');
-    const ledgerDocs = await ledgerRes.json();
-
-    if (!ledgerDocs || ledgerDocs.length === 0) {
-      const wantUpload = confirm('Your ledger is empty. Would you like to upload a document to your ledger first?');
-      if (wantUpload && typeof openUploadModal === 'function') {
-        openUploadModal();
-      }
-      return;
-    }
-
-    // Set pending request ID
-    document.getElementById('pendingRequestId').value = requestId;
-    selectedDocIdForApproval = null;
-
-    // Render ledger items inside the UI Modal
-    const container = document.getElementById('ledgerDocsContainer');
-    container.innerHTML = ledgerDocs.map((doc, idx) => `
-      <label style="display: flex; align-items: center; gap: 12px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer;">
-        <input type="radio" name="ledgerDocRadio" value="${doc.document_id}" ${idx === 0 ? 'checked' : ''} onchange="selectedDocIdForApproval = ${doc.document_id}">
-        <div>
-          <strong style="display: block; color: #1e293b;">${doc.title}</strong>
-          <span style="font-size: 12px; color: #64748b;">Category: ${doc.category || 'General'} | ID: ${doc.document_id}</span>
-        </div>
-      </label>
-    `).join('');
-
-    // Default choice to first document
-    selectedDocIdForApproval = ledgerDocs[0].document_id;
-
-    // Show Modal
-    document.getElementById('documentSelectModal').style.display = 'flex';
-
-  } catch (err) {
-    console.error('Failed to open document selection modal:', err);
-    alert('Failed to load ledger documents.');
-  }
-}
-
-// 2. Helper to close modal
-function closeSelectModal() {
-  document.getElementById('documentSelectModal').style.display = 'none';
-  selectedDocIdForApproval = null;
-}
-
-// 3. Triggered when user clicks 'Grant Access' inside the modal
-async function confirmApprovalSelection() {
-  const requestId = document.getElementById('pendingRequestId').value;
-
-  if (!requestId || !selectedDocIdForApproval) {
-    alert('Please select a document to proceed.');
-    return;
-  }
-
   try {
     const approveRes = await fetch(`/api/requests/${requestId}/approve`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ selectedDocumentId: selectedDocIdForApproval })
+      headers: { 'Content-Type': 'application/json' }
     });
 
     const data = await approveRes.json();
-    closeSelectModal();
 
     if (approveRes.ok) {
-      alert(`✓ Request Approved Successfully!\nAccess Key Code: ${data.grant.key_display_code}`);
-      if (typeof renderIndividualAll === 'function') renderIndividualAll();
+      if (typeof openKeyModal === 'function' && data.grant) {
+        openKeyModal('Organization #1', 'Category Document', data.grant.key_display_code, 'Expires in 24 hours');
+      } else {
+        alert(`✓ Access Granted Automatically!\nAccess Key: ${data.grant.key_display_code}`);
+      }
+      renderIndividualAll();
+    } else if (data.error === 'NO_DOCUMENT_FOR_CATEGORY') {
+      const wantUpload = confirm(`You do not have a document stored for category '${data.category}' yet.\n\nWould you like to upload a document for '${data.category}' now?`);
+      if (wantUpload) {
+        openUploadModal(data.category);
+      }
     } else {
       alert('Approval Error: ' + (data.message || data.error));
     }
-
   } catch (err) {
     console.error('Approval submission error:', err);
     alert('Failed to send approval decision to server.');
   }
 }
+
 async function openDrawer(docId) {
   try {
     const res = await fetch('/api/documents');
@@ -308,10 +286,18 @@ async function openDrawer(docId) {
     const titleEl = document.getElementById('d-title');
     const metaEl = document.getElementById('d-meta');
     const hashEl = document.getElementById('d-hash');
+    const chainEl = document.getElementById('d-chain');
 
-    if (titleEl) titleEl.textContent = d.title;
-    if (metaEl) metaEl.textContent = d.category;
+    if (titleEl) titleEl.textContent = d.category;
+    if (metaEl) metaEl.textContent = `Title: ${d.title} | Versions: ${d.version_count || 1}`;
     if (hashEl) hashEl.textContent = d.file_hash || 'N/A';
+
+    if (chainEl) {
+      chainEl.innerHTML = `<div class="chain-item">
+        <span class="chain-v">v${d.version_count || 1}.0 (Latest)</span>
+        <span class="chain-hash">${d.file_hash ? d.file_hash.substring(0, 16) + '...' : 'N/A'}</span>
+      </div>`;
+    }
 
     document.getElementById('scrim')?.classList.add('open');
     document.getElementById('drawer')?.classList.add('open');
@@ -331,7 +317,7 @@ function closeDrawer() {
 
 function initOrgDashboard() {
   renderOrgAll();
-  setInterval(renderOrgAll, 2000);
+  setInterval(renderOrgAll, 2500);
 }
 
 function handleOrgFileSelect(input) {
@@ -399,7 +385,7 @@ async function renderRequestsSent() {
       const formattedDate = r.created_at ? new Date(r.created_at).toLocaleDateString() : 'Just now';
       return `
         <tr class="row">
-          <td><div class="doc-name">${r.document_title || 'Document'}</div></td>
+          <td><div class="doc-name">${r.category}</div><div class="doc-meta">${r.document_title}</div></td>
           <td>Individual User</td>
           <td><span class="badge ${(r.status || '').toLowerCase()}">${statusText}</span></td>
           <td class="expiry">${formattedDate}</td>
@@ -425,7 +411,7 @@ async function renderDocsReceived() {
 
     receivedBody.innerHTML = approved.length ? approved.map((r) => `
       <tr class="row">
-        <td><div class="doc-name">${r.document_title || 'Document'}</div></td>
+        <td><div class="doc-name">${r.category}</div><div class="doc-meta">${r.document_title}</div></td>
         <td>Individual User</td>
         <td><span class="key-chip">${r.key_display_code || 'GRANTED'}</span></td>
         <td class="expiry">Valid</td>
@@ -447,6 +433,7 @@ function renderOrgAll() {
   renderOverviewStats();
   renderRequestsSent();
   renderDocsReceived();
+  renderAuditLogs();
 }
 
 async function sendNewRequest() {
@@ -454,14 +441,14 @@ async function sendNewRequest() {
   const catInput = document.getElementById('reqCategory');
   const reasonInput = document.getElementById('reqReason');
 
-  if (!docInput || !reasonInput) return;
+  if (!catInput || !reasonInput) return;
 
-  const docName = docInput.value.trim();
-  const category = catInput ? catInput.value : 'KYC document';
+  const category = catInput.value.trim();
+  const docName = docInput && docInput.value.trim() ? docInput.value.trim() : category;
   const reason = reasonInput.value.trim();
 
-  if (!docName || !reason) {
-    alert('Please provide document name and reason.');
+  if (!category || !reason) {
+    alert('Please provide category and reason.');
     return;
   }
 
@@ -481,7 +468,7 @@ async function sendNewRequest() {
 
     if (res.ok) {
       alert('Request sent successfully!');
-      docInput.value = '';
+      if (docInput) docInput.value = '';
       reasonInput.value = '';
       renderOrgAll();
     } else {

@@ -32,19 +32,47 @@ const pool = new Pool({
   port: process.env.DB_PORT || 5432,
 });
 
+// Helper for generating standard key display codes
+function generateKeyDisplayCode() {
+  const p1 = Math.floor(1000 + Math.random() * 9000);
+  const p2 = Math.floor(1000 + Math.random() * 9000);
+  return `TG-${p1}-${p2}`;
+}
+
 // ==========================================
-// 1. GET ALL USER DOCUMENTS
+// 1. GET ALL USER DOCUMENTS (1 per category)
 // ==========================================
 app.get('/api/documents', async (req, res) => {
+  const ownerId = 1;
   try {
     const query = `
-      SELECT DISTINCT d.document_id, d.title, d.category, d.created_at,
-             dv.version_id, dv.file_hash, dv.uploaded_at
+      SELECT 
+        d.document_id, 
+        d.title, 
+        d.category, 
+        d.file_path,
+        d.created_at,
+        latest_ver.version_id,
+        latest_ver.file_hash,
+        latest_ver.uploaded_at,
+        COALESCE(ver_count.total_versions, 1) AS version_count
       FROM documents d
-      LEFT JOIN document_versions dv ON d.document_id = dv.document_id
-      ORDER BY d.document_id DESC;
+      LEFT JOIN LATERAL (
+        SELECT version_id, file_hash, uploaded_at 
+        FROM document_versions 
+        WHERE document_id = d.document_id 
+        ORDER BY version_id DESC 
+        LIMIT 1
+      ) latest_ver ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS total_versions 
+        FROM document_versions 
+        WHERE document_id = d.document_id
+      ) ver_count ON true
+      WHERE d.owner_id = $1
+      ORDER BY d.created_at DESC;
     `;
-    const { rows } = await pool.query(query);
+    const { rows } = await pool.query(query, [ownerId]);
     res.json(rows);
   } catch (err) {
     console.error('Error fetching documents:', err);
@@ -53,49 +81,119 @@ app.get('/api/documents', async (req, res) => {
 });
 
 // ==========================================
-// 2. UPLOAD NEW DOCUMENT (Single Consolidated Route)
+// 2. UPLOAD/UPDATE DOCUMENT (Enforces 1 document per Category + Version Chain)
 // ==========================================
 app.post('/api/documents', upload.single('file'), async (req, res) => {
   const client = await pool.connect();
   try {
+    const ownerId = 1;
     const { title, category } = req.body;
     const filePath = req.file ? req.file.path : null;
 
-    if (!filePath) {
-      return res.status(400).json({ error: 'No file uploaded.' });
+    if (!category) {
+      return res.status(400).json({ error: 'Category is required.' });
     }
 
-    // Dynamic SHA-256 computation of uploaded file
-    const fileBuffer = fs.readFileSync(filePath);
-    const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    const docCategory = category.trim();
+    const docTitle = (title || docCategory).trim();
+
+    // Compute SHA-256 fingerprint if file provided, else generated hash
+    let fileHash;
+    if (filePath && fs.existsSync(filePath)) {
+      const fileBuffer = fs.readFileSync(filePath);
+      fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    } else {
+      fileHash = crypto.createHash('sha256').update(`${docCategory}-${Date.now()}-${Math.random()}`).digest('hex');
+    }
 
     await client.query('BEGIN');
 
-    // Insert into documents table
-    const docResult = await client.query(
-      `INSERT INTO documents (owner_id, title, category, file_path)
-       VALUES ($1, $2, $3, $4)
-       RETURNING document_id`,
-      [1, title, category || 'General', filePath]
+    // Check if user already has a document record for this category
+    const existingRes = await client.query(
+      `SELECT document_id, title, file_path FROM documents WHERE owner_id = $1 AND LOWER(category) = LOWER($2) LIMIT 1`,
+      [ownerId, docCategory]
     );
 
-    const documentId = docResult.rows[0].document_id;
+    let documentId;
+    let versionRes;
 
-    // Insert version tracking without relying on storage_path
-    const versionRes = await client.query(
-      `INSERT INTO document_versions (document_id, file_hash)
-       VALUES ($1, $2)
-       RETURNING *`,
-      [documentId, fileHash]
+    if (existingRes.rows.length > 0) {
+      // Document for this category exists: append new version to version chain
+      documentId = existingRes.rows[0].document_id;
+
+      // Get latest version ID for previous_version_id FK
+      const latestVerRes = await client.query(
+        `SELECT version_id FROM document_versions WHERE document_id = $1 ORDER BY version_id DESC LIMIT 1`,
+        [documentId]
+      );
+      const prevVersionId = latestVerRes.rows.length > 0 ? latestVerRes.rows[0].version_id : null;
+
+      // Update documents title & file_path (if new file uploaded)
+      await client.query(
+        `UPDATE documents 
+         SET title = $1, file_path = COALESCE($2, file_path) 
+         WHERE document_id = $3`,
+        [docTitle, filePath, documentId]
+      );
+
+      // Create new immutable version record
+      versionRes = await client.query(
+        `INSERT INTO document_versions (document_id, previous_version_id, file_hash)
+         VALUES ($1, $2, $3)
+         RETURNING *`,
+        [documentId, prevVersionId, fileHash]
+      );
+
+      // Log audit event
+      await client.query(
+        `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
+         VALUES ('USER', $1, 'UPDATE_DOCUMENT_VERSION', 'DOCUMENT', $2, $3::jsonb)`,
+        [ownerId, documentId, JSON.stringify({ category: docCategory, version_id: versionRes.rows[0].version_id })]
+      );
+
+    } else {
+      // New document for this category
+      const docResult = await client.query(
+        `INSERT INTO documents (owner_id, title, category, file_path)
+         VALUES ($1, $2, $3, $4)
+         RETURNING document_id`,
+        [ownerId, docTitle, docCategory, filePath]
+      );
+      documentId = docResult.rows[0].document_id;
+
+      // Insert initial version (previous_version_id = NULL)
+      versionRes = await client.query(
+        `INSERT INTO document_versions (document_id, previous_version_id, file_hash)
+         VALUES ($1, NULL, $2)
+         RETURNING *`,
+        [documentId, fileHash]
+      );
+
+      // Log audit event
+      await client.query(
+        `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
+         VALUES ('USER', $1, 'UPLOAD_DOCUMENT', 'DOCUMENT', $2, $3::jsonb)`,
+        [ownerId, documentId, JSON.stringify({ category: docCategory, title: docTitle })]
+      );
+    }
+
+    // Auto-link any pending verification requests for this category
+    await client.query(
+      `UPDATE verification_requests 
+       SET document_id = $1 
+       WHERE document_id IS NULL AND LOWER(category) = LOWER($2)`,
+      [documentId, docCategory]
     );
 
     await client.query('COMMIT');
 
     res.status(201).json({
-      message: 'Document uploaded successfully',
+      message: 'Document saved to ledger successfully',
       document_id: documentId,
+      category: docCategory,
       version: versionRes.rows[0],
     });
+
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Upload Error:', err);
@@ -121,15 +219,16 @@ app.get('/api/requests', async (req, res) => {
         vr.request_id, 
         vr.org_id, 
         vr.document_id,
-        d.title AS document_title,
-        d.category AS category,
+        COALESCE(d.title, vr.requested_doc_name, 'Requested Document') AS document_title,
+        COALESCE(d.category, vr.category, 'General') AS category,
         vr.reason, 
         LOWER(vr.status::text) AS status, 
         vr.requested_at AS created_at,
         ag.key_display_code, 
-        ag.expires_at
+        ag.expires_at,
+        ag.revoked_at
       FROM verification_requests vr
-      JOIN documents d ON vr.document_id = d.document_id
+      LEFT JOIN documents d ON vr.document_id = d.document_id
       LEFT JOIN access_grants ag ON vr.request_id = ag.request_id
       ORDER BY vr.request_id DESC;
     `;
@@ -142,52 +241,57 @@ app.get('/api/requests', async (req, res) => {
 });
 
 // ==========================================
-// 4. CREATE VERIFICATION REQUEST
+// 4. CREATE VERIFICATION REQUEST (Org asks for a Document Category)
 // ==========================================
 app.post('/api/requests', async (req, res) => {
   const { orgId, docName, category, reason } = req.body;
   const client = await pool.connect();
 
   try {
+    const reqCategory = (category || 'General').trim();
+    const reqDocName = (docName || reqCategory).trim();
+    const targetOrgId = orgId || 1;
+
     await client.query('BEGIN');
 
-    let docRes = await client.query(
-      `SELECT document_id FROM documents WHERE LOWER(title) = LOWER($1) LIMIT 1`,
-      [docName]
+    // Auto-find if user already has a document for this category
+    const docRes = await client.query(
+      `SELECT document_id FROM documents WHERE owner_id = 1 AND LOWER(category) = LOWER($1) LIMIT 1`,
+      [reqCategory]
     );
 
-    let docId;
-    if (docRes.rows.length > 0) {
-      docId = docRes.rows[0].document_id;
-    } else {
-      const newDoc = await client.query(
-        `INSERT INTO documents (owner_id, category, title)
-         VALUES ($1, $2, $3) RETURNING document_id`,
-        [1, category || 'General', docName]
-      );
-      docId = newDoc.rows[0].document_id;
-    }
+    let docId = docRes.rows.length > 0 ? docRes.rows[0].document_id : null;
 
+    // Check for duplicate active request for the same category
     const pendingCheck = await client.query(
       `SELECT request_id FROM verification_requests 
-       WHERE document_id = $1 AND LOWER(status::text) IN ('requested', 'pending', 'under_review') LIMIT 1`,
-      [docId]
+       WHERE LOWER(category) = LOWER($1) AND LOWER(status::text) IN ('requested', 'pending', 'under_review') LIMIT 1`,
+      [reqCategory]
     );
 
     if (pendingCheck.rows.length > 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'A pending request for this document already exists.' });
+      return res.status(400).json({ error: 'A pending request for this category already exists.' });
     }
 
     const result = await client.query(
-      `INSERT INTO verification_requests (org_id, document_id, reason, status)
-       VALUES ($1, $2, $3, 'requested')
+      `INSERT INTO verification_requests (org_id, document_id, requested_doc_name, category, reason, status)
+       VALUES ($1, $2, $3, $4, $5, 'requested')
        RETURNING *`,
-      [orgId || 1, docId, reason]
+      [targetOrgId, docId, reqDocName, reqCategory, reason]
+    );
+
+    const newRequest = result.rows[0];
+
+    // Audit log entry
+    await client.query(
+      `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
+       VALUES ('ORG_STAFF', 1, 'CREATE_REQUEST', 'VERIFICATION_REQUEST', $1, $2::jsonb)`,
+      [newRequest.request_id, JSON.stringify({ org_id: targetOrgId, category: reqCategory, reason })]
     );
 
     await client.query('COMMIT');
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(newRequest);
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Error creating request:', err);
@@ -198,7 +302,7 @@ app.post('/api/requests', async (req, res) => {
 });
 
 // ==========================================
-// 5. FETCH LEDGER DOCUMENTS FOR SELECTION
+// 5. FETCH LEDGER DOCUMENTS
 // ==========================================
 app.get('/api/my-ledger-documents', async (req, res) => {
   const ownerId = 1;
@@ -206,7 +310,10 @@ app.get('/api/my-ledger-documents', async (req, res) => {
     const result = await pool.query(
       `SELECT d.document_id, d.title, d.category, dv.version_id, dv.file_hash
        FROM documents d
-       LEFT JOIN document_versions dv ON d.document_id = dv.document_id
+       LEFT JOIN LATERAL (
+         SELECT version_id, file_hash FROM document_versions 
+         WHERE document_id = d.document_id ORDER BY version_id DESC LIMIT 1
+       ) dv ON true
        WHERE d.owner_id = $1
        ORDER BY d.created_at DESC`,
       [ownerId]
@@ -219,16 +326,17 @@ app.get('/api/my-ledger-documents', async (req, res) => {
 });
 
 // ==========================================
-// 6. APPROVE REQUEST
+// 6. APPROVE REQUEST (Automatic Category Matching)
 // ==========================================
 app.post('/api/requests/:requestId/approve', async (req, res) => {
   const { requestId } = req.params;
-  const { selectedDocumentId } = req.body;
+  const ownerId = 1;
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
+    // Fetch the verification request
     const reqRes = await client.query(
       `SELECT * FROM verification_requests WHERE request_id = $1`,
       [requestId]
@@ -240,29 +348,42 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
     }
 
     const requestData = reqRes.rows[0];
-    const targetDocId = selectedDocumentId || requestData.document_id;
 
-    if (!targetDocId) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'NO_DOCUMENT_SELECTED', message: 'Please select a document from your ledger.' });
+    // Check if already approved
+    if ((requestData.status || '').toLowerCase() === 'approved') {
+      const existingGrant = await client.query(
+        `SELECT * FROM access_grants WHERE request_id = $1 LIMIT 1`,
+        [requestId]
+      );
+      await client.query('COMMIT');
+      return res.json({ message: 'Request was already approved.', grant: existingGrant.rows[0] });
     }
 
-    const existingGrant = await client.query(
-      `SELECT vr.request_id 
-       FROM verification_requests vr
-       JOIN access_grants ag ON vr.request_id = ag.request_id
-       WHERE vr.org_id = $1 AND vr.document_id = $2 AND vr.status = 'approved' AND ag.revoked_at IS NULL`,
-      [requestData.org_id, targetDocId]
-    );
+    // Auto-match document registered under request's category for this user
+    let targetDocId = requestData.document_id;
 
-    if (existingGrant.rows.length > 0) {
+    if (!targetDocId) {
+      const matchDoc = await client.query(
+        `SELECT document_id FROM documents WHERE owner_id = $1 AND LOWER(category) = LOWER($2) LIMIT 1`,
+        [ownerId, requestData.category]
+      );
+
+      if (matchDoc.rows.length > 0) {
+        targetDocId = matchDoc.rows[0].document_id;
+      }
+    }
+
+    // If user does not have a document in this category yet
+    if (!targetDocId) {
       await client.query('ROLLBACK');
       return res.status(400).json({
-        error: 'DUPLICATE_ACTIVE_REQUEST',
-        message: 'This organization already has an active approval for the selected document.'
+        error: 'NO_DOCUMENT_FOR_CATEGORY',
+        message: `You have not uploaded a document for the '${requestData.category}' category yet. Please upload it first to grant access.`,
+        category: requestData.category
       });
     }
 
+    // Ensure document has at least one version record
     let versionRes = await client.query(
       `SELECT version_id FROM document_versions WHERE document_id = $1 LIMIT 1`,
       [targetDocId]
@@ -271,12 +392,13 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
     if (versionRes.rows.length === 0) {
       const defaultHash = crypto.createHash('sha256').update(`doc-${targetDocId}-${Date.now()}`).digest('hex');
       await client.query(
-        `INSERT INTO document_versions (document_id, file_hash)
-         VALUES ($1, $2)`,
+        `INSERT INTO document_versions (document_id, previous_version_id, file_hash)
+         VALUES ($1, NULL, $2)`,
         [targetDocId, defaultHash]
       );
     }
 
+    // Update request status to approved & bind document_id
     await client.query(
       `UPDATE verification_requests 
        SET status = 'approved', document_id = $1, decided_at = CURRENT_TIMESTAMP
@@ -284,7 +406,8 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
       [targetDocId, requestId]
     );
 
-    const displayCode = 'TG-' + Math.floor(1000 + Math.random() * 9000) + '-' + Math.floor(1000 + Math.random() * 9000);
+    // Issue access grant key
+    const displayCode = generateKeyDisplayCode();
     const keyHash = crypto
       .createHash('sha256')
       .update(`${requestId}-${targetDocId}-${Date.now()}-${Math.random()}`)
@@ -295,6 +418,13 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
        VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')
        RETURNING *`,
       [requestId, keyHash, displayCode]
+    );
+
+    // Log audit event
+    await client.query(
+      `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
+       VALUES ('USER', $1, 'APPROVE_REQUEST', 'VERIFICATION_REQUEST', $2, $3::jsonb)`,
+      [ownerId, requestId, JSON.stringify({ document_id: targetDocId, key_display_code: displayCode })]
     );
 
     await client.query('COMMIT');
@@ -310,7 +440,7 @@ app.post('/api/requests/:requestId/approve', async (req, res) => {
 });
 
 // ==========================================
-// 7. VERIFY ACCESS KEY & FETCH DOCUMENT METADATA
+// 7. VERIFY ACCESS KEY & FETCH METADATA
 // ==========================================
 app.post('/api/verify-key', async (req, res) => {
   const { keyCode } = req.body;
@@ -320,13 +450,16 @@ app.post('/api/verify-key', async (req, res) => {
       `SELECT 
         ag.grant_id, ag.key_display_code, ag.expires_at, ag.revoked_at,
         d.title, d.category, d.owner_id,
-        dv.file_hash, dv.created_at AS version_date
+        dv.file_hash, dv.uploaded_at AS version_date
        FROM access_grants ag
        JOIN verification_requests vr ON ag.request_id = vr.request_id
        JOIN documents d ON vr.document_id = d.document_id
-       LEFT JOIN document_versions dv ON d.document_id = dv.document_id
+       LEFT JOIN LATERAL (
+         SELECT file_hash, uploaded_at FROM document_versions 
+         WHERE document_id = d.document_id ORDER BY version_id DESC LIMIT 1
+       ) dv ON true
        WHERE ag.key_display_code = $1
-       ORDER BY dv.created_at DESC LIMIT 1`,
+       LIMIT 1`,
       [keyCode]
     );
 
@@ -369,7 +502,7 @@ app.get('/api/documents/download/:keyCode', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT d.file_path, d.title, ag.expires_at, ag.revoked_at
+      `SELECT d.file_path, d.title, ag.expires_at, ag.revoked_at, vr.request_id
        FROM access_grants ag
        JOIN verification_requests vr ON ag.request_id = vr.request_id
        JOIN documents d ON vr.document_id = d.document_id
@@ -382,7 +515,7 @@ app.get('/api/documents/download/:keyCode', async (req, res) => {
       return res.status(404).json({ error: 'Invalid or missing access key.' });
     }
 
-    const { file_path, expires_at, revoked_at } = result.rows[0];
+    const { file_path, expires_at, revoked_at, request_id } = result.rows[0];
 
     if (expires_at && new Date(expires_at) < new Date()) {
       return res.status(403).json({ error: 'Access key has expired.' });
@@ -393,7 +526,7 @@ app.get('/api/documents/download/:keyCode', async (req, res) => {
     }
 
     if (!file_path) {
-      return res.status(404).json({ error: 'No file path registered for this document in the database.' });
+      return res.status(404).json({ error: 'No file binary stored for this document in the database.' });
     }
 
     const absolutePath = path.resolve(file_path);
@@ -402,11 +535,36 @@ app.get('/api/documents/download/:keyCode', async (req, res) => {
       return res.status(404).json({ error: `File binary not found on disk at: ${absolutePath}` });
     }
 
+    // Audit log access
+    await pool.query(
+      `INSERT INTO audit_logs (actor_type, actor_id, action, entity_type, entity_id, metadata)
+       VALUES ('ORG_STAFF', 1, 'DOWNLOAD_DOCUMENT', 'VERIFICATION_REQUEST', $1, $2::jsonb)`,
+      [request_id, JSON.stringify({ key_display_code: keyCode })]
+    );
+
     return res.sendFile(absolutePath);
 
   } catch (err) {
     console.error('Error serving document file:', err);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// 9. AUDIT LOGS ENDPOINT
+// ==========================================
+app.get('/api/audit-logs', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT log_id, actor_type, actor_id, action, entity_type, entity_id, metadata, timestamp 
+       FROM audit_logs 
+       ORDER BY log_id DESC 
+       LIMIT 50`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching audit logs:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

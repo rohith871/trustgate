@@ -102,26 +102,26 @@
 
       <!-- SEND REQUEST -->
       <section id="sendRequest" class="view">
-        <div class="topline"><div><h1>Send a Request</h1><p class="subhead">Ask a person directly for a specific document. They'll see this in their Incoming Requests and choose whether to approve it.</p></div></div>
+        <div class="topline"><div><h1>Send a Request</h1><p class="subhead">Request document access by category. When the user approves, access is granted automatically to their single document in that category.</p></div></div>
         <div class="panel" style="max-width:560px;">
           <div class="drawer-body">
-            <div class="field"><label>Document name</label><input type="text" id="reqDocName" placeholder="e.g. Vaccination Record"></div>
-            <div class="field"><label>User's TrustGate ID or email</label><input type="text" id="reqUser" value="rohan.k@trustgate.id"></div>
             <div class="field">
-  <label>Document category</label>
-  <select id="reqCategory">
-    <option value="Medical Record">Medical Record</option>
-    <option value="Degree / Marksheet">Degree / Marksheet</option>
-    <option value="KYC Document">KYC Document</option>
-    <option value="Employment Contract">Employment Contract</option>
-    <option value="Tax Return / Proof">Tax Return / Proof</option>
-    <option value="Identity Card (Aadhaar / Passport / SSN)">Identity Card (Aadhaar / Passport / SSN)</option>
-    <option value="Property / Land Deed">Property / Land Deed</option>
-    <option value="Financial Statement">Financial Statement</option>
-    <option value="Utility / Address Proof">Utility / Address Proof</option>
-    <option value="Certificates / Credentials">Certificates / Credentials</option>
-  </select>
-</div>
+              <label>Document category</label>
+              <select id="reqCategory">
+                <option value="Degree / Marksheet">Degree / Marksheet</option>
+                <option value="KYC Document">KYC Document</option>
+                <option value="Medical Record">Medical Record</option>
+                <option value="Employment Record">Employment Record</option>
+                <option value="Financial Statement">Financial Statement</option>
+                <option value="Identity Card (Aadhaar / Passport / SSN)">Identity Card (Aadhaar / Passport / SSN)</option>
+                <option value="Tax Return / Proof">Tax Return / Proof</option>
+                <option value="Property / Land Deed">Property / Land Deed</option>
+                <option value="Utility / Address Proof">Utility / Address Proof</option>
+                <option value="Certificates / Credentials">Certificates / Credentials</option>
+              </select>
+            </div>
+            <div class="field"><label>Document name / label</label><input type="text" id="reqDocName" placeholder="e.g. Vaccination Record / PAN Card"></div>
+            <div class="field"><label>User's TrustGate ID or email</label><input type="text" id="reqUser" value="rohan.k@trustgate.id"></div>
             <div class="field"><label>Reason for request</label><input type="text" id="reqReason" placeholder="e.g. Pre-admission verification"></div>
             <button class="gate-submit" onclick="sendNewRequest()">Send request</button>
             <p class="sim-note" style="margin-top:12px;">This appears instantly in the recipient's Incoming Requests (open individual.html to see it land there).</p>
@@ -131,10 +131,10 @@
 
       <!-- REQUESTS SENT -->
       <section id="requestsSent" class="view">
-        <div class="topline"><div><h1>Requests Sent</h1><p class="subhead">Track every request you've raised and its current stage.</p></div></div>
+        <div class="topline"><div><h1>Requests Sent</h1><p class="subhead">Track every request raised by your organization.</p></div></div>
         <div class="panel">
           <div class="table-scroll"><table>
-            <thead><tr><th>Document</th><th>Sent to</th><th>Status</th><th>Sent</th></tr></thead>
+            <thead><tr><th>Requested Category & Document</th><th>Sent to</th><th>Status</th><th>Sent</th></tr></thead>
             <tbody id="sentBody">
               <!-- Dynamically populated from PostgreSQL by app.js -->
             </tbody>
@@ -144,16 +144,16 @@
 
       <!-- DOCUMENTS RECEIVED -->
       <section id="docsReceived" class="view">
-        <div class="topline"><div><h1>Documents Received</h1><p class="subhead">Documents you currently hold a valid, time-bound key for.</p></div></div>
+        <div class="topline"><div><h1>Documents Received</h1><p class="subhead">Active access keys for user documents.</p></div></div>
         <div class="panel">
           <div class="table-scroll"><table>
             <thead>
               <tr>
-                <th>Document</th>
+                <th>Document Category</th>
                 <th>From</th>
                 <th>Access key</th>
                 <th>Expires</th>
-                <th>Action</th> <!-- Added Action header -->
+                <th>Action</th>
               </tr>
             </thead>
             <tbody id="receivedBody">
@@ -165,7 +165,7 @@
 
       <!-- ORG AUDIT -->
       <section id="orgAudit" class="view">
-        <div class="topline"><div><h1>Audit Log</h1><p class="subhead">Every document your organization has requested, received, or had access to expire.</p></div></div>
+        <div class="topline"><div><h1>Audit Log</h1><p class="subhead">Audit trail of requests sent, keys verified, and file downloads.</p></div></div>
         <div class="panel" id="auditOrgBody2"></div>
       </section>
     </main>

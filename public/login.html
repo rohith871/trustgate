@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TrustGate — Sign In</title>
+<title>TrustGate — Sign In / Create Account</title>
 <link rel="stylesheet" href="css/styles.css">
 <style>
   body {
@@ -15,51 +15,74 @@
     color: #f8fafc;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     margin: 0;
-    padding: 20px;
+    padding: 24px 16px;
+    box-sizing: border-box;
   }
   .login-card {
     background: #1e293b;
     border: 1px solid #334155;
     border-radius: 16px;
     width: 100%;
-    max-width: 440px;
-    padding: 36px;
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    max-width: 480px;
+    padding: 32px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
   }
   .login-brand {
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
     text-decoration: none;
     color: #fff;
   }
   .login-brand-mark {
-    width: 36px;
-    height: 36px;
+    width: 38px;
+    height: 38px;
     background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-    border-radius: 8px;
+    border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: bold;
-    font-size: 18px;
+    font-weight: 800;
+    font-size: 19px;
+    color: #fff;
+  }
+  .nav-tabs {
+    display: flex;
+    border-bottom: 1px solid #334155;
+    margin-bottom: 20px;
+    gap: 8px;
+  }
+  .nav-tab-btn {
+    padding: 10px 16px;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .nav-tab-btn.active {
+    color: #3b82f6;
+    border-bottom-color: #3b82f6;
   }
   .role-toggle {
     display: flex;
     background: #0f172a;
     border-radius: 8px;
     padding: 4px;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
   }
   .role-btn {
     flex: 1;
-    padding: 10px;
+    padding: 9px;
     border: none;
     background: transparent;
     color: #94a3b8;
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s;
@@ -69,18 +92,18 @@
     color: #ffffff;
   }
   .field {
-    margin-bottom: 20px;
+    margin-bottom: 16px;
   }
   .field label {
     display: block;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     color: #94a3b8;
     margin-bottom: 6px;
   }
-  .field input {
+  .field input, .field select {
     width: 100%;
-    padding: 12px 14px;
+    padding: 11px 13px;
     background: #0f172a;
     border: 1px solid #334155;
     border-radius: 8px;
@@ -90,7 +113,7 @@
     outline: none;
     transition: border 0.2s;
   }
-  .field input:focus {
+  .field input:focus, .field select:focus {
     border-color: #3b82f6;
   }
   .submit-btn {
@@ -101,9 +124,10 @@
     border-radius: 8px;
     color: #fff;
     font-weight: 600;
-    font-size: 15px;
+    font-size: 14px;
     cursor: pointer;
     transition: background 0.2s;
+    margin-top: 8px;
   }
   .submit-btn:hover {
     background: #1d4ed8;
@@ -116,17 +140,17 @@
     padding: 12px;
     border-radius: 8px;
     font-size: 13px;
-    margin-bottom: 20px;
+    margin-bottom: 18px;
   }
-  .demo-hint {
-    margin-top: 20px;
+  .success-box {
+    display: none;
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid #22c55e;
+    color: #86efac;
     padding: 12px;
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.2);
     border-radius: 8px;
-    font-size: 12px;
-    color: #93c5fd;
-    line-height: 1.5;
+    font-size: 13px;
+    margin-bottom: 18px;
   }
 </style>
 </head>
@@ -137,111 +161,288 @@
     <div class="login-brand-mark">TG</div>
     <div>
       <div style="font-weight: 700; font-size: 18px;">TrustGate</div>
-      <div style="font-size: 11px; color: #94a3b8;">Verification Ledger</div>
+      <div style="font-size: 11px; color: #94a3b8;">Verifiable Document Ledger</div>
     </div>
   </a>
 
+  <!-- Tab 1: Sign In vs Create Account -->
+  <div class="nav-tabs">
+    <button type="button" class="nav-tab-btn active" id="tabSignIn" onclick="setMode('signin')">Sign In</button>
+    <button type="button" class="nav-tab-btn" id="tabRegister" onclick="setMode('register')">Create Account</button>
+  </div>
+
+  <!-- Role Toggle: Individual vs Organization -->
   <div class="role-toggle">
     <button type="button" class="role-btn active" id="btnRoleIndividual" onclick="setRole('individual')">👤 Individual</button>
     <button type="button" class="role-btn" id="btnRoleOrg" onclick="setRole('organization')">🏛 Organization</button>
   </div>
 
   <div id="errorBox" class="error-box"></div>
+  <div id="successBox" class="success-box"></div>
 
-  <form id="loginForm" onsubmit="handleLogin(event)">
-    <input type="hidden" id="authRole" value="individual">
-
+  <!-- ================= FORM: SIGN IN ================= -->
+  <form id="signInForm" onsubmit="handleSignIn(event)">
     <div class="field">
-      <label id="emailLabel">Individual Email Address</label>
-      <input type="email" id="authEmail" required placeholder="rohan.k@trustgate.id">
+      <label id="signInEmailLabel">Email Address (e.g. Gmail)</label>
+      <input type="email" id="signInEmail" required placeholder="you@gmail.com">
     </div>
 
     <div class="field">
       <label>Password</label>
-      <input type="password" id="authPassword" required placeholder="••••••••">
+      <input type="password" id="signInPassword" required placeholder="••••••••">
     </div>
 
-    <button type="submit" class="submit-btn" id="btnSubmit">Sign in →</button>
+    <button type="submit" class="submit-btn" id="btnSignInSubmit">Sign in →</button>
   </form>
 
-  <div class="demo-hint" id="demoHint">
-    <strong>Demo Credentials:</strong><br>
-    <span id="demoText">Email: <code>rohan.k@trustgate.id</code> | Password: <code>password123</code></span>
-  </div>
+  <!-- ================= FORM: REGISTER INDIVIDUAL ================= -->
+  <form id="regIndividualForm" style="display:none;" onsubmit="handleRegisterIndividual(event)">
+    <div class="field">
+      <label>Full Name</label>
+      <input type="text" id="regIndName" required placeholder="e.g. Jensen Huang">
+    </div>
+
+    <div class="field">
+      <label>Email Address (Your Gmail or personal email)</label>
+      <input type="email" id="regIndEmail" required placeholder="JensenH@gmail.com">
+    </div>
+
+    <div class="field">
+      <label>Choose Password</label>
+      <input type="password" id="regIndPassword" required placeholder="••••••••">
+    </div>
+
+    <button type="submit" class="submit-btn">Create Individual Account →</button>
+  </form>
+
+  <!-- ================= FORM: REGISTER ORGANIZATION ================= -->
+  <form id="regOrgForm" style="display:none;" onsubmit="handleRegisterOrg(event)">
+    <div class="field">
+      <label>Organization Name</label>
+      <input type="text" id="regOrgName" required placeholder="e.g. City General Hospital / State Bank">
+    </div>
+
+    <div class="field">
+      <label>Organization Type</label>
+      <select id="regOrgType" required>
+        <option value="Hospital">Hospital</option>
+        <option value="Bank / NBFC">Bank / NBFC</option>
+        <option value="Employer">Employer</option>
+        <option value="Educational institution">Educational institution</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Registration / License Number</label>
+      <input type="text" id="regOrgRegNo" required placeholder="e.g. REG-CGH-2026 / CIN-98234">
+    </div>
+
+    <div class="field">
+      <label>Verifier Staff Officer Name</label>
+      <input type="text" id="regOrgStaffName" required placeholder="e.g. Dr. Priya M.">
+    </div>
+
+    <div class="field">
+      <label>Official Work Email</label>
+      <input type="email" id="regOrgEmail" required placeholder="priya@cgh.org">
+    </div>
+
+    <div class="field">
+      <label>Choose Password</label>
+      <input type="password" id="regOrgPassword" required placeholder="••••••••">
+    </div>
+
+    <button type="submit" class="submit-btn">Register Organization & Staff →</button>
+  </form>
+
+  <p style="text-align:center; margin-top:20px; font-size:12px; color:#64748b;">
+    <a href="index.html" style="color:#64748b; text-decoration:none;">← Return to Home</a>
+  </p>
 </div>
 
 <script>
+  let currentMode = 'signin'; // 'signin' | 'register'
+  let currentRole = 'individual'; // 'individual' | 'organization'
+
+  function setMode(mode) {
+    currentMode = mode;
+    document.getElementById('errorBox').style.display = 'none';
+    document.getElementById('successBox').style.display = 'none';
+
+    const tabSignIn = document.getElementById('tabSignIn');
+    const tabRegister = document.getElementById('tabRegister');
+
+    if (mode === 'signin') {
+      tabSignIn.classList.add('active');
+      tabRegister.classList.remove('active');
+    } else {
+      tabRegister.classList.add('active');
+      tabSignIn.classList.remove('active');
+    }
+
+    renderActiveForm();
+  }
+
   function setRole(role) {
-    document.getElementById('authRole').value = role;
+    currentRole = role;
+    document.getElementById('errorBox').style.display = 'none';
+    document.getElementById('successBox').style.display = 'none';
+
     const btnInd = document.getElementById('btnRoleIndividual');
     const btnOrg = document.getElementById('btnRoleOrg');
-    const emailLabel = document.getElementById('emailLabel');
-    const emailInput = document.getElementById('authEmail');
-    const demoText = document.getElementById('demoText');
 
     if (role === 'individual') {
       btnInd.classList.add('active');
       btnOrg.classList.remove('active');
-      emailLabel.textContent = 'Individual Email Address';
-      emailInput.placeholder = 'rohan.k@trustgate.id';
-      demoText.innerHTML = 'Email: <code>rohan.k@trustgate.id</code> | Password: <code>password123</code>';
+      document.getElementById('signInEmailLabel').textContent = 'Individual Email Address (e.g. Gmail)';
+      document.getElementById('signInEmail').placeholder = 'you@gmail.com';
     } else {
       btnOrg.classList.add('active');
       btnInd.classList.remove('active');
-      emailLabel.textContent = 'Organization Staff Email';
-      emailInput.placeholder = 'priya.m@cgh.org';
-      demoText.innerHTML = 'Email: <code>priya.m@cgh.org</code> | Password: <code>password123</code>';
+      document.getElementById('signInEmailLabel').textContent = 'Organization Work Email';
+      document.getElementById('signInEmail').placeholder = 'staff@organization.org';
+    }
+
+    renderActiveForm();
+  }
+
+  function renderActiveForm() {
+    const signInForm = document.getElementById('signInForm');
+    const regIndForm = document.getElementById('regIndividualForm');
+    const regOrgForm = document.getElementById('regOrgForm');
+
+    signInForm.style.display = 'none';
+    regIndForm.style.display = 'none';
+    regOrgForm.style.display = 'none';
+
+    if (currentMode === 'signin') {
+      signInForm.style.display = 'block';
+    } else {
+      if (currentRole === 'individual') {
+        regIndForm.style.display = 'block';
+      } else {
+        regOrgForm.style.display = 'block';
+      }
     }
   }
 
-  // Parse URL query parameter ?role=
+  // Handle URL query parameters (?role=organization or ?mode=register)
   document.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams(window.location.search);
     const roleParam = params.get('role');
+    const modeParam = params.get('mode');
+
     if (roleParam === 'organization' || roleParam === 'org') {
       setRole('organization');
-    } else {
-      setRole('individual');
+    }
+    if (modeParam === 'register' || modeParam === 'signup') {
+      setMode('register');
     }
   });
 
-  async function handleLogin(e) {
+  // 1. Submit Sign In
+  async function handleSignIn(e) {
     e.preventDefault();
     const errorBox = document.getElementById('errorBox');
     errorBox.style.display = 'none';
 
-    const email = document.getElementById('authEmail').value.trim();
-    const password = document.getElementById('authPassword').value;
-    const role = document.getElementById('authRole').value;
-
-    if (!email || !password) {
-      errorBox.textContent = 'Please fill in both email and password.';
-      errorBox.style.display = 'block';
-      return;
-    }
+    const email = document.getElementById('signInEmail').value.trim();
+    const password = document.getElementById('signInPassword').value;
 
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, role })
+        body: JSON.stringify({ email, password, role: currentRole })
       });
 
       const data = await res.json();
 
       if (res.ok) {
-        if (role === 'organization') {
-          window.location.href = 'organization.html';
-        } else {
-          window.location.href = 'individual.html';
-        }
+        window.location.href = (currentRole === 'organization') ? 'organization.html' : 'individual.html';
       } else {
-        errorBox.textContent = data.message || 'Login failed. Please check your credentials.';
+        errorBox.textContent = data.message || 'Invalid email or password.';
         errorBox.style.display = 'block';
       }
     } catch (err) {
-      console.error('Login request error:', err);
       errorBox.textContent = 'Failed to connect to authentication server.';
+      errorBox.style.display = 'block';
+    }
+  }
+
+  // 2. Submit Register Individual
+  async function handleRegisterIndividual(e) {
+    e.preventDefault();
+    const errorBox = document.getElementById('errorBox');
+    const successBox = document.getElementById('successBox');
+    errorBox.style.display = 'none';
+    successBox.style.display = 'none';
+
+    const name = document.getElementById('regIndName').value.trim();
+    const email = document.getElementById('regIndEmail').value.trim();
+    const password = document.getElementById('regIndPassword').value;
+
+    try {
+      const res = await fetch('/api/auth/register-individual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        successBox.textContent = 'Account created! Redirecting to your dashboard...';
+        successBox.style.display = 'block';
+        setTimeout(() => {
+          window.location.href = 'individual.html';
+        }, 800);
+      } else {
+        errorBox.textContent = data.message || 'Registration failed.';
+        errorBox.style.display = 'block';
+      }
+    } catch (err) {
+      errorBox.textContent = 'Failed to connect to server.';
+      errorBox.style.display = 'block';
+    }
+  }
+
+  // 3. Submit Register Organization
+  async function handleRegisterOrg(e) {
+    e.preventDefault();
+    const errorBox = document.getElementById('errorBox');
+    const successBox = document.getElementById('successBox');
+    errorBox.style.display = 'none';
+    successBox.style.display = 'none';
+
+    const orgName = document.getElementById('regOrgName').value.trim();
+    const orgType = document.getElementById('regOrgType').value;
+    const registrationNumber = document.getElementById('regOrgRegNo').value.trim();
+    const name = document.getElementById('regOrgStaffName').value.trim();
+    const email = document.getElementById('regOrgEmail').value.trim();
+    const password = document.getElementById('regOrgPassword').value;
+
+    try {
+      const res = await fetch('/api/auth/register-organization', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orgName, orgType, registrationNumber, name, email, password })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        successBox.textContent = 'Organization verified and registered! Redirecting to dashboard...';
+        successBox.style.display = 'block';
+        setTimeout(() => {
+          window.location.href = 'organization.html';
+        }, 800);
+      } else {
+        errorBox.textContent = data.message || 'Registration failed.';
+        errorBox.style.display = 'block';
+      }
+    } catch (err) {
+      errorBox.textContent = 'Failed to connect to server.';
       errorBox.style.display = 'block';
     }
   }

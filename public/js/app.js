@@ -297,11 +297,56 @@ async function renderAuditLogs() {
     if (!res.ok) return;
     const logs = await res.json();
 
-    const formattedLogs = logs.map(l => ({
-      time: new Date(l.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      main: `${l.actor_type} performed ${l.action} on ${l.entity_type} #${l.entity_id}`,
-      sub: l.metadata ? JSON.stringify(l.metadata) : ''
-    }));
+    const formattedLogs = logs.map(l => {
+      const time = new Date(l.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const meta = l.metadata || {};
+      let main = '';
+      let sub = '';
+
+      switch (l.action) {
+        case 'USER_LOGIN':
+          main = 'Signed in to account';
+          sub = `${meta.email || 'Individual user'}`;
+          break;
+        case 'REGISTER_INDIVIDUAL':
+          main = 'Account created on TrustGate';
+          sub = `${meta.name || ''} (${meta.email || ''})`;
+          break;
+        case 'STAFF_LOGIN':
+          main = 'Verifier signed in';
+          sub = `${meta.email || ''} · ${meta.orgName || ''}`;
+          break;
+        case 'REGISTER_ORGANIZATION':
+          main = 'Organization registered';
+          sub = `${meta.orgName || ''} · ${meta.email || ''}`;
+          break;
+        case 'UPLOAD_DOCUMENT':
+          main = `Document uploaded to ledger`;
+          sub = `Category: ${meta.category || 'General'} · Title: ${meta.title || ''}`;
+          break;
+        case 'UPDATE_DOCUMENT_VERSION':
+          main = `New version appended to ledger`;
+          sub = `Category: ${meta.category || 'General'} · Version ID: #${meta.version_id || ''}`;
+          break;
+        case 'CREATE_REQUEST':
+          main = `Verification request submitted`;
+          sub = `Category: ${meta.category || ''} · Recipient: ${meta.target_email || ''}`;
+          break;
+        case 'APPROVE_REQUEST':
+          main = `Access granted to organization`;
+          sub = `Issued 24h Access Key: ${meta.key_display_code || ''}`;
+          break;
+        case 'DOWNLOAD_DOCUMENT':
+          main = `Document accessed & downloaded`;
+          sub = `Verified via Access Key: ${meta.key_display_code || ''}`;
+          break;
+        default:
+          main = `${l.action.replace(/_/g, ' ')}`;
+          sub = meta && Object.keys(meta).length ? JSON.stringify(meta) : '';
+      }
+
+      return { time, main, sub };
+    });
 
     if (typeof renderAuditList === 'function') {
       renderAuditList('auditIndividualBody', formattedLogs);

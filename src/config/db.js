@@ -1,18 +1,10 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// Debugging block to see what Render is actually injecting
-console.log("=== DB CONFIG DEBUG ===");
-console.log("NODE_ENV:", process.env.NODE_ENV);
-console.log("DATABASE_URL is set:", !!process.env.DATABASE_URL);
-if (process.env.DATABASE_URL) {
-  console.log("DATABASE_URL prefix:", process.env.DATABASE_URL.substring(0, 20) + "...");
-} else {
-  console.error("❌ CRITICAL: DATABASE_URL is missing from process.env!");
-}
-console.log("=======================");
+// Trim whitespace/newlines to prevent copy-paste clipping bugs from Render/Neon
+const connectionString = process.env.DATABASE_URL ? process.env.DATABASE_URL.trim() : undefined;
 
-const connectionString = process.env.DATABASE_URL;
+console.log("🔍 DB Config Check -> DATABASE_URL loaded:", !!connectionString);
 
 const pool = new Pool(
   connectionString

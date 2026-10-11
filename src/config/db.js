@@ -1,18 +1,17 @@
 const { Pool } = require('pg');
-require('dotenv').config();
 
-// Trim whitespace/newlines to prevent copy-paste clipping bugs from Render/Neon
+console.log("=== RENDER RUNTIME ENV CHECK ===");
+console.log("DATABASE_URL raw value:", process.env.DATABASE_URL ? "FOUND (length: " + process.env.DATABASE_URL.length + ")" : "UNDEFINED");
+console.log("Available Env Keys:", Object.keys(process.env).filter(k => !k.startsWith('npm_') && k !== 'PATH'));
+console.log("================================");
+
 const connectionString = process.env.DATABASE_URL ? process.env.DATABASE_URL.trim() : undefined;
-
-console.log("🔍 DB Config Check -> DATABASE_URL loaded:", !!connectionString);
 
 const pool = new Pool(
   connectionString
     ? {
         connectionString,
-        ssl: {
-          rejectUnauthorized: false // Required for Neon cloud SSL
-        }
+        ssl: { rejectUnauthorized: false }
       }
     : {
         host: process.env.DB_HOST || 'localhost',

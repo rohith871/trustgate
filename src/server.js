@@ -31,13 +31,22 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'trustgate_db',
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT || 5432,
-});
+const pool = new Pool(
+  process.env.DATABASE_URL
+    ? {
+        connectionString: process.env.DATABASE_URL.trim(),
+        ssl: { rejectUnauthorized: false }
+      }
+    : {
+        user: process.env.DB_USER || 'postgres',
+        host: process.env.DB_HOST || 'localhost',
+        database: process.env.DB_NAME || 'trustgate_db',
+        password: process.env.DB_PASSWORD,
+        port: process.env.DB_PORT || 5432,
+      }
+);
+
+console.log("🔥 DATABASE CONFIG CHECK:", process.env.DATABASE_URL ? "Using Neon DATABASE_URL successfully! 🎉" : "WARNING: Falling back to localhost ❌");
 
 function generateKeyDisplayCode() {
   const p1 = Math.floor(1000 + Math.random() * 9000);
